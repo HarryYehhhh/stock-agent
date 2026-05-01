@@ -1,0 +1,198 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Telegram-based AI agent for US stock earnings calls
+
+Parameters:
+  AppName:
+    Type: String
+    Default: earnings-agent
+  Region:
+    Type: String
+    Default: ap-northeast-1
+
+Globals:
+  Function:
+    Timeout: 30
+    MemorySize: 512
+    Architectures: [x86_64]
+    Environment:
+      Variables:
+        CONVERSATIONS_TABLE: !Ref ConversationsTable
+        SUBSCRIBERS_TABLE: !Ref SubscribersTable
+        PROCESSED_UPDATES_TABLE: !Ref ProcessedUpdatesTable
+        UPDATES_QUEUE_URL: !Ref UpdatesQueue
+        POWERTOOLS_SERVICE_NAME: !Ref AppName
+        LOG_LEVEL: INFO
+
+Resources:
+  ConversationsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AppName}-conversations"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: chat_id
+          AttributeType: S
+        - AttributeName: timestamp
+          AttributeType: S
+      KeySchema:
+        - AttributeName: chat_id
+          KeyType: HASH
+        - AttributeName: timestamp
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  SubscribersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AppName}-subscribers"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: chat_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: chat_id
+          KeyType: HASH
+
+  ProcessedUpdatesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AppName}-processed-updates"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: update_id
+          AttributeType: N
+      KeySchema:
+        - AttributeName: update_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  UpdatesQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AppName}-updates"
+      VisibilityTimeout: 360
+      MessageRetentionPeriod: 3600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt UpdatesDLQ.Arn
+        maxReceiveCount: 3
+
+  UpdatesDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AppName}-updates-dlq"
+      MessageRetentionPeriod: 1209600
+
+  WebhookApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: prod
+
+  WebhookFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AppName}-webhook"
+      PackageType: Image
+      ImageConfig:
+        Command: ["agent.webhook_handler.handler"]
+      Timeout: 10
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ProcessedUpdatesTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt UpdatesQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource: !Sub "arn:aws:ssm:${Region}:${AWS::AccountId}:parameter/earnings-agent/*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub "arn:aws:kms:${Region}:${AWS::AccountId}:key/alias/aws/ssm"
+      Events:
+        Webhook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref WebhookApi
+            Method: POST
+            Path: /webhook
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ../
+      DockerTag: webhook
+
+  ProcessorFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AppName}-processor"
+      PackageType: Image
+      ImageConfig:
+        Command: ["agent.processor_handler.handler"]
+      Timeout: 300
+      MemorySize: 1024
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref ConversationsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SubscribersTable
+        - SQSPollerPolicy:
+            QueueName: !GetAtt UpdatesQueue.QueueName
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource: !Sub "arn:aws:ssm:${Region}:${AWS::AccountId}:parameter/earnings-agent/*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub "arn:aws:kms:${Region}:${AWS::AccountId}:key/alias/aws/ssm"
+      Events:
+        Sqs:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt UpdatesQueue.Arn
+            BatchSize: 1
+            ScalingConfig:
+              MaximumConcurrency: 10
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ../
+      DockerTag: processor
+
+  SchedulerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "${AppName}-scheduler"
+      PackageType: Image
+      ImageConfig:
+        Command: ["agent.scheduler_handler.handler"]
+      Timeout: 300
+      MemorySize: 1024
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SubscribersTable
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              Resource: !Sub "arn:aws:ssm:${Region}:${AWS::AccountId}:parameter/earnings-agent/*"
+            - Effect: Allow
+              Action: kms:Decrypt
+              Resource: !Sub "arn:aws:kms:${Region}:${AWS::AccountId}:key/alias/aws/ssm"
+      Events:
+        Daily:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "cron(0 0 * * ? *)"
+            ScheduleExpressionTimezone: UTC
+    Metadata:
+      Dockerfile: Dockerfile
+      DockerContext: ../
+      DockerTag: scheduler
+
+Outputs:
+  WebhookUrl:
+    Description: Public webhook URL for Telegram setWebhook
+    Value: !Sub "https://${WebhookApi}.execute-api.${Region}.amazonaws.com/webhook"
+  UpdatesQueueUrl:
+    Value: !Ref UpdatesQueue
