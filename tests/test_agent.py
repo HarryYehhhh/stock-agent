@@ -85,6 +85,8 @@ def test_uses_gemini_model():
 def test_system_instruction_is_string():
     assert isinstance(agent_module.SYSTEM_INSTRUCTION, str)
     assert "繁體中文" in agent_module.SYSTEM_INSTRUCTION
+    assert "get_analyst_estimates" in agent_module.SYSTEM_INSTRUCTION
+    assert "get_earnings_calendar" in agent_module.SYSTEM_INSTRUCTION
 
 
 def test_build_tools_returns_list():

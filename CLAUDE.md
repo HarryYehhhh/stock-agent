@@ -39,6 +39,23 @@ Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. 
 
 **AWS resources (SAM `infra/template.yaml`):** API Gateway HTTP API, 3 Lambda functions (Docker container images from single Dockerfile, differentiated by `ImageConfig.Command`), 3 DynamoDB tables (on-demand billing, TTL on conversations + dedup), SQS queue + DLQ (3 retries, 14-day retention), EventBridge daily schedule.
 
+## DynamoDB Schema
+
+| Table | PK | SK | TTL | 說明 |
+|-------|----|----|-----|------|
+| `earnings-agent-conversations` | `chat_id` (S) | `timestamp` (S) | `ttl` (30 天) | 對話紀錄 |
+| `earnings-agent-subscribers` | `chat_id` (S) | — | — | 訂閱者（含 `active` flag） |
+| `earnings-agent-processed-updates` | `update_id` (N) | — | `ttl` (1 小時) | Telegram update dedup |
+
+## Cost Estimate
+
+| 元件 | 費用 |
+|------|------|
+| API Gateway + Lambda + EventBridge + DynamoDB + SQS + ECR | 免費額度內 ~$0 |
+| Gemini API (`gemini-2.5-flash`) | ~$1-5/月 |
+| Finnhub API (free tier) + Telegram Bot | $0 |
+| **合計** | **~$1-5/月** |
+
 ## Testing
 
 Tests use `moto` to mock AWS services (DynamoDB, SQS) and `pytest-mock` for Gemini API / Finnhub calls. Fixtures in `tests/conftest.py` auto-create all tables and queues. Tests never hit real AWS or external APIs.
@@ -53,3 +70,24 @@ See `.env.example`. Required keys: `GEMINI_API_KEY`, `FINNHUB_API_KEY`, `TELEGRA
 - Minimum code that solves the problem. No speculative features, abstractions for single-use code, or error handling for impossible scenarios.
 - Surgical changes only: don't "improve" adjacent code. Every changed line should trace to the user's request. Remove only orphans YOUR changes created.
 - Define verifiable success criteria before starting. For bug fixes, write a reproducing test first.
+
+## Project Status
+
+### Done
+- [x] Telegram 對話（繁體中文回應）
+- [x] 3 Tools：earnings calendar、analyst estimates、stock news
+- [x] 多輪對話（DynamoDB 持久化，20 筆上限，30 天 TTL）
+- [x] SQS 解耦（webhook → SQS → processor）
+- [x] Telegram update dedup
+- [x] SAM deploy（Lambda + API Gateway + SQS + EventBridge）
+
+### TODO
+- [ ] 每天 08:00 推播隔天財報提醒（scheduler_handler）
+- [ ] `/subscribe` 與 `/unsubscribe` 指令
+
+### Phase 2
+- [ ] 用戶自訂 watchlist（`/watch`、`/unwatch`、`/mylist`）
+- [ ] 股價即時查詢 tool（`get_quote`）
+- [ ] 財報電話會議逐字稿摘要
+- [ ] 技術指標 tool（RSI、MA、布林通道）
+- [ ] CloudWatch Dashboard 監控

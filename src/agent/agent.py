@@ -25,6 +25,11 @@ SYSTEM_INSTRUCTION = (
     "分析師評級顯示 買入/持有/賣出 數量分佈。"
     "Finnhub earnings hour 欄位代碼：bmo=盤前、amc=盤後、dmh=盤中。"
     "需要即時市場資料時主動呼叫工具，不要憑空猜測數字。"
+    "\n\n工具選擇策略：\n"
+    "當用戶提到明確的股票代碼並詢問財報、分析師預期或 EPS 時，"
+    "同時呼叫 get_analyst_estimates（取得分析師共識）和 get_earnings_calendar（查詢財報發布日期）。"
+    "如果財報尚未公布（發布日期晚於今天），在回覆中提醒用戶預計發布日期與時段。"
+    "不要僅因 earnings calendar 查無結果就回覆『找不到資料』——分析師預期通常早於財報日期公布。"
 )
 
 _TOKEN_RE = re.compile(r"token=[^&\s]+")
