@@ -1,6 +1,6 @@
 """Common fixtures: stub env vars, then start moto for AWS resources.
 
-Tests must not hit real AWS / Anthropic / Finnhub.
+Tests must not hit real AWS / Gemini / Finnhub.
 """
 
 from __future__ import annotations
@@ -68,12 +68,13 @@ def aws():
         os.environ["UPDATES_QUEUE_URL"] = queue_url
 
         # Reset cached boto3/httpx clients in each test so they pick up the moto env.
-        from agent import config as cfg
+        from agent import config as cfg, webhook_handler
         from agent.db import conversations, dedup, subscribers
 
         cfg._load_secrets.cache_clear()
         dedup._table.cache_clear()
         conversations._table.cache_clear()
         subscribers._table.cache_clear()
+        webhook_handler._sqs.cache_clear()
 
         yield {"sqs": sqs, "queue_url": queue_url, "ddb": ddb}

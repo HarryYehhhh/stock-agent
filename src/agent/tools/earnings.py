@@ -29,4 +29,4 @@ def get_earnings_calendar(date_from: str, date_to: str) -> list[dict]:
         params={"from": date_from, "to": date_to, "token": finnhub_api_key()},
     )
     r.raise_for_status()
-    return r.json().get("earningsCalendar", [])
+    return r.json().get("earningsCalendar", [])[:100]

@@ -1,4 +1,4 @@
-"""SQS-triggered Lambda that runs the Claude agent for one Telegram update."""
+"""SQS-triggered Lambda that runs the Gemini agent for one Telegram update."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import json
 from aws_lambda_powertools import Logger
 
 from agent.agent import run_agent
-from agent.db.conversations import build_messages_for_claude, save_message
+from agent.db.conversations import build_messages, save_message
 from agent.db.subscribers import subscribe, unsubscribe
 from agent.telegram_client import send_message, send_typing_action
 
@@ -52,7 +52,7 @@ def _process_update(body: dict) -> None:
         return
 
     send_typing_action(chat_id)
-    history = build_messages_for_claude(chat_id)
+    history = build_messages(chat_id)
 
     try:
         reply = run_agent(text, history)

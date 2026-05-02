@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from functools import lru_cache
 
 from google import genai
@@ -25,6 +26,12 @@ SYSTEM_INSTRUCTION = (
     "Finnhub earnings hour 欄位代碼：bmo=盤前、amc=盤後、dmh=盤中。"
     "需要即時市場資料時主動呼叫工具，不要憑空猜測數字。"
 )
+
+_TOKEN_RE = re.compile(r"token=[^&\s]+")
+
+
+def _sanitize_error(msg: str) -> str:
+    return _TOKEN_RE.sub("token=***", msg)
 
 
 def _build_tools() -> list[types.Tool]:
@@ -62,28 +69,40 @@ def _run_tool(name: str, tool_input: dict) -> dict:
         return {"error": f"unknown tool '{name}'"}
     try:
         result = fn(**tool_input)
-        if isinstance(result, str):
-            return {"result": result}
-        return result
+        if isinstance(result, dict):
+            return result
+        return {"result": result}
     except Exception as e:
-        log.exception("tool %s failed", name)
-        return {"error": str(e), "tool": name}
+        log.warning("tool %s failed: %s", name, _sanitize_error(str(e)))
+        return {"error": _sanitize_error(str(e)), "tool": name}
+
+
+def _build_history_contents(history: list[dict]) -> list[types.Content]:
+    """Build Gemini contents from chat history, ensuring strict user/model alternation."""
+    contents: list[types.Content] = []
+    for msg in history:
+        role = "user" if msg["role"] == "user" else "model"
+        if contents and contents[-1].role == role:
+            contents[-1].parts.append(types.Part.from_text(text=msg["content"]))
+        else:
+            contents.append(types.Content(
+                role=role,
+                parts=[types.Part.from_text(text=msg["content"])],
+            ))
+    return contents
 
 
 def run_agent(user_message: str, history: list[dict]) -> str:
     """Run the Gemini tool-use loop until completion. Returns the final assistant text."""
-    contents: list[types.Content] = []
-    for msg in history:
-        role = "user" if msg["role"] == "user" else "model"
-        contents.append(types.Content(
-            role=role,
-            parts=[types.Part.from_text(text=msg["content"])],
-        ))
+    contents = _build_history_contents(history)
 
-    contents.append(types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=user_message)],
-    ))
+    if contents and contents[-1].role == "user":
+        contents[-1].parts.append(types.Part.from_text(text=user_message))
+    else:
+        contents.append(types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=user_message)],
+        ))
 
     tools = _build_tools()
 

@@ -21,11 +21,11 @@ deploy:
 
 ssm-put:
 	@test -n "$(FINNHUB_API_KEY)" || (echo "FINNHUB_API_KEY missing" && exit 1)
-	@test -n "$(ANTHROPIC_API_KEY)" || (echo "ANTHROPIC_API_KEY missing" && exit 1)
+	@test -n "$(GEMINI_API_KEY)" || (echo "GEMINI_API_KEY missing" && exit 1)
 	@test -n "$(TELEGRAM_BOT_TOKEN)" || (echo "TELEGRAM_BOT_TOKEN missing" && exit 1)
 	@test -n "$(TELEGRAM_WEBHOOK_SECRET)" || (echo "TELEGRAM_WEBHOOK_SECRET missing" && exit 1)
 	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/finnhub-api-key --value "$(FINNHUB_API_KEY)"
-	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/anthropic-api-key --value "$(ANTHROPIC_API_KEY)"
+	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/gemini-api-key --value "$(GEMINI_API_KEY)"
 	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/telegram-bot-token --value "$(TELEGRAM_BOT_TOKEN)"
 	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/telegram-webhook-secret --value "$(TELEGRAM_WEBHOOK_SECRET)"
 
@@ -38,10 +38,10 @@ set-webhook:
 	  -d "secret_token=$(TELEGRAM_WEBHOOK_SECRET)"
 
 logs-webhook:
-	cd infra && sam logs -n WebhookFunction --tail
+	cd infra && sam logs --stack-name $(STACK) --region $(REGION) -n WebhookFunction --tail
 
 logs-processor:
-	cd infra && sam logs -n ProcessorFunction --tail
+	cd infra && sam logs --stack-name $(STACK) --region $(REGION) -n ProcessorFunction --tail
 
 logs-scheduler:
-	cd infra && sam logs -n SchedulerFunction --tail
+	cd infra && sam logs --stack-name $(STACK) --region $(REGION) -n SchedulerFunction --tail

@@ -1,6 +1,6 @@
 """Company news tool backed by Finnhub /company-news.
 
-Returns raw English text; Claude is responsible for translating to Traditional
+Returns raw English text; the LLM is responsible for translating to Traditional
 Chinese in the final response.
 """
 
