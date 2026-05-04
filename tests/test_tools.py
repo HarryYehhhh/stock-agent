@@ -1,4 +1,4 @@
-"""Tool-level tests. Sector tool reads real config json; HTTP tools mock httpx."""
+"""Tool-level tests. HTTP tools mock httpx."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 
 from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
 from agent.tools import _http as tools_http
-from agent.tools import earnings, estimates, news, sector
+from agent.tools import earnings, estimates, news
 
 
 @pytest.fixture
@@ -31,7 +31,7 @@ def _resp(payload):
 
 def test_all_tool_schemas_have_required_fields():
     names = {t["name"] for t in ALL_TOOL_SCHEMAS}
-    assert names == {"get_earnings_calendar", "get_analyst_estimates", "get_stocks_by_sector", "get_stock_news"}
+    assert names == {"get_earnings_calendar", "get_analyst_estimates", "get_stock_news"}
     for tool in ALL_TOOL_SCHEMAS:
         assert "description" in tool
         assert tool["input_schema"]["type"] == "object"
@@ -54,6 +54,20 @@ def test_earnings_calls_finnhub_calendar(mock_http):
     assert kwargs["params"]["to"] == "2026-05-02"
 
 
+def test_get_company_industry_calls_profile2(mock_http):
+    mock_http.get.return_value = _resp({"finnhubIndustry": "Technology"})
+    out = earnings.get_company_industry("AAPL")
+    assert out == "Technology"
+    args, kwargs = mock_http.get.call_args
+    assert args[0] == "/stock/profile2"
+    assert kwargs["params"]["symbol"] == "AAPL"
+
+
+def test_get_company_industry_returns_empty_when_missing(mock_http):
+    mock_http.get.return_value = _resp({})
+    assert earnings.get_company_industry("UNKNOWN") == ""
+
+
 # --- estimates ---
 
 def test_estimates_combines_recommendation_and_eps(mock_http):
@@ -69,7 +83,7 @@ def test_estimates_combines_recommendation_and_eps(mock_http):
 
 # --- news ---
 
-def test_news_returns_top_5_with_translation_left_to_claude(mock_http):
+def test_news_returns_top_5(mock_http):
     mock_http.get.return_value = _resp(
         [{"headline": f"news {i}", "summary": "...", "url": "u", "datetime": 0, "source": "s"} for i in range(10)]
     )
@@ -85,16 +99,3 @@ def test_news_clamps_days_back(mock_http):
     # days_back was clamped to 30, so 'from' should be roughly today - 30.
     assert params["from"] < params["to"]
 
-
-# --- sector ---
-
-def test_sector_known_returns_symbols():
-    out = sector.get_stocks_by_sector("Technology")
-    assert out["sector"] == "Technology"
-    assert "AAPL" in out["symbols"]
-
-
-def test_sector_unknown_returns_available():
-    out = sector.get_stocks_by_sector("Crypto")
-    assert "error" in out
-    assert "Technology" in out["available_sectors"]

@@ -40,6 +40,44 @@ def mock_client(monkeypatch):
     return client
 
 
+def test_sanitize_error_removes_token():
+    msg = "Error for https://finnhub.io/api/v1/stock?token=sk_12345&symbol=AAPL"
+    sanitized = agent_module._sanitize_error(msg)
+    assert "sk_12345" not in sanitized
+    assert "token=***" in sanitized
+    assert "symbol=AAPL" in sanitized
+
+
+def test_sanitize_error_no_token_unchanged():
+    msg = "connection timeout"
+    assert agent_module._sanitize_error(msg) == msg
+
+
+def test_build_history_merges_same_role():
+    history = [
+        {"role": "user", "content": "hello"},
+        {"role": "user", "content": "world"},
+    ]
+    contents = agent_module._build_history_contents(history)
+    assert len(contents) == 1
+    assert len(contents[0].parts) == 2
+
+
+def test_build_history_alternates_roles():
+    history = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"},
+        {"role": "user", "content": "bye"},
+    ]
+    contents = agent_module._build_history_contents(history)
+    assert len(contents) == 3
+    assert [c.role for c in contents] == ["user", "model", "user"]
+
+
+def test_build_history_empty():
+    assert agent_module._build_history_contents([]) == []
+
+
 def test_uses_gemini_model():
     assert "gemini" in agent_module.MODEL
 
@@ -47,6 +85,8 @@ def test_uses_gemini_model():
 def test_system_instruction_is_string():
     assert isinstance(agent_module.SYSTEM_INSTRUCTION, str)
     assert "繁體中文" in agent_module.SYSTEM_INSTRUCTION
+    assert "get_analyst_estimates" in agent_module.SYSTEM_INSTRUCTION
+    assert "get_earnings_calendar" in agent_module.SYSTEM_INSTRUCTION
 
 
 def test_build_tools_returns_list():
@@ -54,7 +94,7 @@ def test_build_tools_returns_list():
     assert len(tools) == 1
     declarations = tools[0].function_declarations
     names = {d.name for d in declarations}
-    assert names == {"get_earnings_calendar", "get_analyst_estimates", "get_stocks_by_sector", "get_stock_news"}
+    assert names == {"get_earnings_calendar", "get_analyst_estimates", "get_stock_news"}
 
 
 def test_simple_text_response(mock_client):

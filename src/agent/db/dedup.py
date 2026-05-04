@@ -2,7 +2,7 @@
 
 Webhook handler calls claim_update_id() before enqueuing to SQS.
 Returns False when the update_id was already claimed, so the handler can
-short-circuit and avoid double-billing Claude calls when Telegram retries.
+short-circuit and avoid double-billing LLM calls when Telegram retries.
 """
 
 from __future__ import annotations

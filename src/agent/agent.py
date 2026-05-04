@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from functools import lru_cache
 
 from google import genai
@@ -24,7 +25,18 @@ SYSTEM_INSTRUCTION = (
     "分析師評級顯示 買入/持有/賣出 數量分佈。"
     "Finnhub earnings hour 欄位代碼：bmo=盤前、amc=盤後、dmh=盤中。"
     "需要即時市場資料時主動呼叫工具，不要憑空猜測數字。"
+    "\n\n工具選擇策略：\n"
+    "當用戶提到明確的股票代碼並詢問財報、分析師預期或 EPS 時，"
+    "同時呼叫 get_analyst_estimates（取得分析師共識）和 get_earnings_calendar（查詢財報發布日期）。"
+    "如果財報尚未公布（發布日期晚於今天），在回覆中提醒用戶預計發布日期與時段。"
+    "不要僅因 earnings calendar 查無結果就回覆『找不到資料』——分析師預期通常早於財報日期公布。"
 )
+
+_TOKEN_RE = re.compile(r"token=[^&\s]+")
+
+
+def _sanitize_error(msg: str) -> str:
+    return _TOKEN_RE.sub("token=***", msg)
 
 
 def _build_tools() -> list[types.Tool]:
@@ -62,28 +74,40 @@ def _run_tool(name: str, tool_input: dict) -> dict:
         return {"error": f"unknown tool '{name}'"}
     try:
         result = fn(**tool_input)
-        if isinstance(result, str):
-            return {"result": result}
-        return result
+        if isinstance(result, dict):
+            return result
+        return {"result": result}
     except Exception as e:
-        log.exception("tool %s failed", name)
-        return {"error": str(e), "tool": name}
+        log.warning("tool %s failed: %s", name, _sanitize_error(str(e)))
+        return {"error": _sanitize_error(str(e)), "tool": name}
+
+
+def _build_history_contents(history: list[dict]) -> list[types.Content]:
+    """Build Gemini contents from chat history, ensuring strict user/model alternation."""
+    contents: list[types.Content] = []
+    for msg in history:
+        role = "user" if msg["role"] == "user" else "model"
+        if contents and contents[-1].role == role:
+            contents[-1].parts.append(types.Part.from_text(text=msg["content"]))
+        else:
+            contents.append(types.Content(
+                role=role,
+                parts=[types.Part.from_text(text=msg["content"])],
+            ))
+    return contents
 
 
 def run_agent(user_message: str, history: list[dict]) -> str:
     """Run the Gemini tool-use loop until completion. Returns the final assistant text."""
-    contents: list[types.Content] = []
-    for msg in history:
-        role = "user" if msg["role"] == "user" else "model"
-        contents.append(types.Content(
-            role=role,
-            parts=[types.Part.from_text(text=msg["content"])],
-        ))
+    contents = _build_history_contents(history)
 
-    contents.append(types.Content(
-        role="user",
-        parts=[types.Part.from_text(text=user_message)],
-    ))
+    if contents and contents[-1].role == "user":
+        contents[-1].parts.append(types.Part.from_text(text=user_message))
+    else:
+        contents.append(types.Content(
+            role="user",
+            parts=[types.Part.from_text(text=user_message)],
+        ))
 
     tools = _build_tools()
 

@@ -3,7 +3,7 @@
 PK = chat_id (S), SK = timestamp (S, ISO 8601).
 TTL drops items 30 days after write.
 History is fetched newest-first then reversed for chronological order before
-being passed to Claude.
+being passed to the LLM.
 """
 
 from __future__ import annotations
@@ -50,6 +50,6 @@ def get_history(chat_id: str, limit: int = HISTORY_LIMIT) -> list[dict]:
     return items
 
 
-def build_messages_for_claude(chat_id: str) -> list[dict]:
-    """Format DynamoDB rows into Claude messages API shape (role + text content)."""
+def build_messages(chat_id: str) -> list[dict]:
+    """Format DynamoDB rows into message dicts (role + text content)."""
     return [{"role": item["role"], "content": item["content"]} for item in get_history(chat_id)]
