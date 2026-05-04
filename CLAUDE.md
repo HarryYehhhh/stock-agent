@@ -5,64 +5,60 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Dev Commands
 
 ```bash
-make install          # uv sync
-make test             # PYTHONPATH=src uv run pytest tests/ -v
-make dev              # FastAPI local server on :8080 (needs .env from .env.example)
-make build            # cd infra && sam build
-make deploy           # SAM deploy to AWS (add GUIDED=1 for first time)
-make logs-webhook     # tail WebhookFunction CloudWatch logs
-make logs-processor   # tail ProcessorFunction CloudWatch logs
-make logs-scheduler   # tail SchedulerFunction CloudWatch logs
+make install            # uv sync
+make test               # PYTHONPATH=src uv run pytest tests/ -v
+make build              # cd infra && sam build
+make deploy             # SAM deploy (requires 4 env vars; see Environment Variables)
+make logs-scheduler     # tail SchedulerFunction CloudWatch logs
+make invoke-scheduler   # manually trigger the daily push for verification
 ```
 
-Run a single test: `PYTHONPATH=src uv run pytest tests/test_agent.py -v -k test_name`
+Run a single test: `PYTHONPATH=src uv run pytest tests/test_scheduler.py -v -k test_name`
 
 ## Architecture
 
-Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. Uses Google Gemini (`gemini-2.5-flash`) with tool-use loop via `google-genai` SDK.
+Single-purpose daily push: every day at 00:00 UTC (08:00 Asia/Taipei), one Lambda fetches tomorrow's US earnings calendar from Finnhub, filters to tech-sector stocks, asks Gemini to summarise in Traditional Chinese, and pushes the result to a single Telegram chat.
 
-**Request flow:** Telegram webhook → `webhook_handler` (Lambda, 10s) → SQS → `processor_handler` (Lambda, 300s) → `run_agent()` → Gemini tool-use loop (max 10 iterations) → Telegram reply. The SQS decoupling prevents Telegram's 60s timeout from killing long agent runs.
+**Flow:** EventBridge ScheduleV2 → `scheduler_handler` (Lambda, 300s) → Finnhub `/calendar/earnings` → per-symbol Finnhub `/stock/profile2` for industry filter → Gemini tool-use loop (`run_agent`) → Telegram `sendMessage`.
 
-**Third Lambda:** `scheduler_handler` fires daily via EventBridge to push earnings reminders to subscribers.
+There is no webhook, no SQS, no DynamoDB, no API Gateway — the conversational bot was removed to eliminate AWS cost surface area. The recipient is hardcoded via the `TELEGRAM_CHAT_ID` env var.
 
 **Key modules under `src/agent/`:**
-- `agent.py` — Gemini tool-use loop with function calling; `run_agent()` is the core entry point
-- `tools/` — Three tools: `get_earnings_calendar`, `get_analyst_estimates`, `get_stock_news` (all hit Finnhub API). Tool schemas are defined in each module and aggregated in `tools/__init__.py` as `ALL_TOOL_SCHEMAS` / `TOOL_FUNCTIONS`
-- `db/` — DynamoDB access via boto3 resource API with `@lru_cache` table singletons: `conversations` (chat history, 20-message limit, 30-day TTL), `subscribers` (push notifications), `dedup` (Telegram update deduplication via conditional put)
-- `config.py` — Reads from SSM Parameter Store in Lambda (`/earnings-agent/` prefix), falls back to env vars locally. All accessors are `@lru_cache`
-- `telegram_client.py` — Telegram Bot API wrapper; auto-chunks long messages at 4000 chars, falls back to plain text on Markdown parse failure
-- `local_server.py` — FastAPI dev server that simulates the webhook→processor flow synchronously (no real SQS needed)
+- `scheduler_handler.py` — Lambda entry point. `_filter_tech` calls `get_company_industry` per symbol and keeps `{Technology, Semiconductors, Software, Communications, Media, Telecommunication}`; industry is attached to each entry so the prompt can label it.
+- `agent.py` — Gemini tool-use loop with function calling; `run_agent()` is the core entry point. Used here for the Chinese summary; tools can fetch analyst estimates / news on demand.
+- `tools/` — `get_earnings_calendar`, `get_analyst_estimates`, `get_stock_news` (LLM-callable), plus `get_company_industry` (internal, not in the schema). Schemas aggregated in `tools/__init__.py` as `ALL_TOOL_SCHEMAS` / `TOOL_FUNCTIONS`.
+- `config.py` — Plain env-var accessors (`finnhub_api_key`, `gemini_api_key`, `telegram_bot_token`, `telegram_chat_id`). No SSM, no caching.
+- `telegram_client.py` — Telegram Bot API wrapper; auto-chunks long messages at 4000 chars, falls back to plain text on Markdown parse failure.
 
-**Tool result contract:** `_run_tool()` wraps non-dict results (list, str) as `{"result": ...}` because Gemini's `FunctionResponse` requires a dict. New tools returning `list` or `str` are handled automatically; only `dict` passes through unwrapped.
+**Tool result contract:** `_run_tool()` wraps non-dict results (list, str) as `{"result": ...}` because Gemini's `FunctionResponse` requires a dict. New tools returning `list` or `str` are handled automatically.
 
-**Processor routing** (`processor_handler.py`): `/start`, `/help` → welcome message; `/subscribe`, `/unsubscribe` → manage push notifications; anything else → `run_agent()` with conversation history.
-
-**AWS resources (SAM `infra/template.yaml`):** API Gateway HTTP API, 3 Lambda functions (Docker container images from single Dockerfile, differentiated by `ImageConfig.Command`), 3 DynamoDB tables (on-demand billing, TTL on conversations + dedup), SQS queue + DLQ (3 retries, 14-day retention), EventBridge daily schedule.
-
-## DynamoDB Schema
-
-| Table | PK | SK | TTL | 說明 |
-|-------|----|----|-----|------|
-| `earnings-agent-conversations` | `chat_id` (S) | `timestamp` (S) | `ttl` (30 天) | 對話紀錄 |
-| `earnings-agent-subscribers` | `chat_id` (S) | — | — | 訂閱者（含 `active` flag） |
-| `earnings-agent-processed-updates` | `update_id` (N) | — | `ttl` (1 小時) | Telegram update dedup |
+**AWS resources (SAM `infra/template.yaml`):** Just one — `SchedulerFunction` (Docker image, 1024 MB, 300s timeout) with a `ScheduleV2` event. No other resources. ECR holds the image.
 
 ## Cost Estimate
 
 | 元件 | 費用 |
 |------|------|
-| API Gateway + Lambda + EventBridge + DynamoDB + SQS + ECR | 免費額度內 ~$0 |
-| Gemini API (`gemini-2.5-flash`) | ~$1-5/月 |
+| Lambda + EventBridge + ECR | 免費額度內 ~$0 |
+| Gemini API (`gemini-2.5-flash`) | ~$0.05/月（每天一次呼叫） |
 | Finnhub API (free tier) + Telegram Bot | $0 |
-| **合計** | **~$1-5/月** |
+| **合計** | **~$0/月（AWS 端不會產生帳單）** |
 
 ## Testing
 
-Tests use `moto` to mock AWS services (DynamoDB, SQS) and `pytest-mock` for Gemini API / Finnhub calls. Fixtures in `tests/conftest.py` auto-create all tables and queues. Tests never hit real AWS or external APIs.
+Tests use `pytest-mock` / `MagicMock` for Gemini API and Finnhub HTTP calls. No AWS mocking needed — the code no longer touches AWS services besides what Lambda does at runtime. `tests/conftest.py` only stubs env vars so `config.py` doesn't blow up at import.
 
 ## Environment Variables
 
-See `.env.example`. Required keys: `GEMINI_API_KEY`, `FINNHUB_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`. In production these come from SSM Parameter Store under `/earnings-agent/` prefix. Table names and queue URL have env var fallbacks for local dev.
+See `.env.example`. All 4 required, sourced from Lambda env vars in production (set via SAM `--parameter-overrides` at deploy time, NoEcho):
+
+| Var | Purpose |
+|-----|---------|
+| `FINNHUB_API_KEY` | Finnhub free-tier API key |
+| `GEMINI_API_KEY` | Google Gemini API key |
+| `TELEGRAM_BOT_TOKEN` | Bot token from @BotFather |
+| `TELEGRAM_CHAT_ID` | Numeric chat ID of the single recipient |
+
+Local tests stub these in `conftest.py`. For local agent runs (rare), put them in `.env` and source it.
 
 ## Coding Guidelines
 
@@ -74,20 +70,12 @@ See `.env.example`. Required keys: `GEMINI_API_KEY`, `FINNHUB_API_KEY`, `TELEGRA
 ## Project Status
 
 ### Done
-- [x] Telegram 對話（繁體中文回應）
-- [x] 3 Tools：earnings calendar、analyst estimates、stock news
-- [x] 多輪對話（DynamoDB 持久化，20 筆上限，30 天 TTL）
-- [x] SQS 解耦（webhook → SQS → processor）
-- [x] Telegram update dedup
-- [x] SAM deploy（Lambda + API Gateway + SQS + EventBridge）
+- [x] 每日科技股財報推播（scheduler_handler）
+- [x] Industry filter via Finnhub `/stock/profile2`
+- [x] LLM 中文摘要（Gemini `gemini-2.5-flash`）
+- [x] 極簡 SAM stack（單一 Lambda + EventBridge + ECR）
 
-### TODO
-- [ ] 每天 08:00 推播隔天財報提醒（scheduler_handler）
-- [ ] `/subscribe` 與 `/unsubscribe` 指令
-
-### Phase 2
-- [ ] 用戶自訂 watchlist（`/watch`、`/unwatch`、`/mylist`）
+### Phase 2（如果要回頭加功能）
+- [ ] Watchlist（需要重新引入持久化儲存）
 - [ ] 股價即時查詢 tool（`get_quote`）
 - [ ] 財報電話會議逐字稿摘要
-- [ ] 技術指標 tool（RSI、MA、布林通道）
-- [ ] CloudWatch Dashboard 監控

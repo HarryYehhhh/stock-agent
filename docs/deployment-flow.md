@@ -2,7 +2,7 @@
 
 ## 架構總覽
 
-本專案使用 **AWS SAM (Serverless Application Model)** 進行部署，所有 Lambda function 皆以 **Docker container image** 方式打包，部署至 AWS `ap-northeast-1` region。
+本專案使用 **AWS SAM (Serverless Application Model)** 部署，Lambda 以 **Docker container image** 方式打包，部署至 AWS `ap-northeast-1`。整個 stack 只有一個 Lambda function，由 EventBridge 每日觸發一次。
 
 ---
 
@@ -10,59 +10,30 @@
 
 ```mermaid
 flowchart TD
-    subgraph 前置作業
-        A[make install<br/>安裝 Python 依賴] --> B[設定 .env<br/>參照 .env.example]
-        B --> C[make ssm-put<br/>寫入 secrets 至 SSM Parameter Store]
-    end
+    A[make install<br/>安裝 Python 依賴] --> B[export 4 個 env vars<br/>FINNHUB / GEMINI / BOT_TOKEN / CHAT_ID]
+    B --> C[make build<br/>sam build 建置 Docker image]
+    C --> D{首次部署?}
+    D -- 是 --> E[GUIDED=1 make deploy]
+    D -- 否 --> F[make deploy]
+    E --> G[CloudFormation 建立/更新 Stack]
+    F --> G
+    G --> H[SchedulerFunction<br/>Lambda 300s / 1024MB]
+    G --> I[EventBridge ScheduleV2<br/>每日 00:00 UTC]
 
-    subgraph 建置與部署
-        C --> D[make build<br/>sam build 建置 Docker images]
-        D --> E{首次部署?}
-        E -- 是 --> F[GUIDED=1 make deploy<br/>互動式引導部署]
-        E -- 否 --> G[make deploy<br/>自動部署]
-        F --> H[CloudFormation 建立/更新 Stack]
-        G --> H
-    end
-
-    subgraph 部署產物
-        H --> I[API Gateway HTTP API]
-        H --> J[WebhookFunction<br/>Lambda 10s / 512MB]
-        H --> K[ProcessorFunction<br/>Lambda 300s / 1024MB]
-        H --> L[SchedulerFunction<br/>Lambda 300s / 1024MB]
-        H --> M[DynamoDB Tables x3]
-        H --> N[SQS Queue + DLQ]
-        H --> O[EventBridge 每日排程]
-    end
-
-    subgraph 部署後設定
-        I --> P[make set-webhook<br/>註冊 Telegram Webhook URL]
-    end
-
-    subgraph 監控
-        Q[make logs-webhook]
-        R[make logs-processor]
-        S[make logs-scheduler]
-    end
+    J[make invoke-scheduler<br/>手動觸發測試]
+    K[make logs-scheduler<br/>查看 CloudWatch 日誌]
 ```
 
-## 請求處理流程圖
+## 執行流程圖
 
 ```mermaid
 flowchart LR
-    U[Telegram 使用者] -->|訊息| TG[Telegram API]
-    TG -->|POST /webhook| APIGW[API Gateway]
-    APIGW --> WH[WebhookFunction<br/>10s timeout]
-    WH -->|去重檢查| DDB3[ProcessedUpdates<br/>DynamoDB]
-    WH -->|送出訊息| SQS[SQS Queue]
-    SQS --> PROC[ProcessorFunction<br/>300s timeout]
-    PROC -->|Gemini tool-use loop| GEMINI[Google Gemini API]
-    PROC -->|儲存對話| DDB1[Conversations<br/>DynamoDB]
-    PROC -->|回覆| TG
-    SQS -->|失敗重試 3 次| DLQ[Dead Letter Queue]
-
     EB[EventBridge<br/>每日 00:00 UTC] --> SCHED[SchedulerFunction]
-    SCHED -->|讀取訂閱者| DDB2[Subscribers<br/>DynamoDB]
-    SCHED -->|推播提醒| TG
+    SCHED -->|/calendar/earnings| FH1[Finnhub API]
+    SCHED -->|/stock/profile2 per symbol| FH2[Finnhub API]
+    SCHED -->|tool-use loop| GEMINI[Google Gemini API]
+    SCHED -->|sendMessage| TG[Telegram Bot API]
+    TG --> U[單一使用者<br/>TELEGRAM_CHAT_ID]
 ```
 
 ---
@@ -71,11 +42,15 @@ flowchart LR
 
 ### 1. 前置作業
 
-| 步驟 | 指令 | 說明 |
-|------|------|------|
-| 安裝依賴 | `make install` | 使用 `uv sync` 安裝 Python 依賴 |
-| 環境變數 | 複製 `.env.example` → `.env` | 填入 `GEMINI_API_KEY`、`FINNHUB_API_KEY`、`TELEGRAM_BOT_TOKEN`、`TELEGRAM_WEBHOOK_SECRET` |
-| 寫入 Secrets | `make ssm-put` | 將 secrets 寫入 AWS SSM Parameter Store（`/earnings-agent/*` prefix） |
+```bash
+make install                       # uv sync
+export FINNHUB_API_KEY=...
+export GEMINI_API_KEY=...
+export TELEGRAM_BOT_TOKEN=...
+export TELEGRAM_CHAT_ID=123456789  # 你的數字 chat id
+```
+
+`make deploy` 會檢查這 4 個 env var，缺一就 fail fast。
 
 ### 2. 建置
 
@@ -83,49 +58,35 @@ flowchart LR
 make build
 ```
 
-執行 `sam build`，根據 `infra/template.yaml` 和專案根目錄的 `Dockerfile` 建置三個 Lambda function 的 Docker image。
+執行 `sam build`，根據 `infra/template.yaml` 與 `Dockerfile` 建置 Lambda 用的 Docker image。
 
 **Dockerfile 流程：**
 1. 基於 `public.ecr.aws/lambda/python:3.11`
-2. 安裝 `google-genai`、`httpx`、`boto3`、`aws-lambda-powertools`
-3. 複製 `src/agent/` 原始碼至 container
-4. 三個 function 共用同一個 image，透過 SAM template 的 `ImageConfig.Command` 指定不同 handler
+2. 安裝 `google-genai`、`httpx`、`aws-lambda-powertools`
+3. 複製 `src/agent/` 至 container
+4. CMD 指向 `agent.scheduler_handler.handler`
 
 ### 3. 部署
 
 ```bash
-# 首次部署（互動式引導）
-GUIDED=1 make deploy
-
-# 後續部署
-make deploy
+GUIDED=1 make deploy   # 首次
+make deploy            # 後續
 ```
 
 SAM 部署流程：
-1. 將 Docker images 推送至 ECR（自動建立 repository）
-2. 產生 CloudFormation changeset
-3. 執行 changeset，建立/更新所有 AWS 資源
+1. Docker image 推送至 ECR（`--resolve-image-repos` 自動建 repo）
+2. SAM 用 `--resolve-s3` 自動建/沿用 managed bucket 暫存模板
+3. 4 個 secret 透過 `--parameter-overrides` 傳入並設為 NoEcho 的 SAM Parameters
+4. CloudFormation 套用 changeset
 
-**部署參數**（`infra/samconfig.toml`）：
-- Stack name: `earnings-agent`
-- Region: `ap-northeast-1`
-- Capabilities: `CAPABILITY_IAM`
-
-### 4. 部署後設定
+### 4. 驗證
 
 ```bash
-make set-webhook
+make invoke-scheduler   # aws lambda invoke，立即跑一次
+make logs-scheduler     # tail CloudWatch logs
 ```
 
-呼叫 Telegram Bot API 的 `setWebhook`，將 API Gateway 的 URL 註冊為 Webhook endpoint。
-
-### 5. 監控
-
-```bash
-make logs-webhook     # 查看 Webhook Lambda 日誌
-make logs-processor   # 查看 Processor Lambda 日誌
-make logs-scheduler   # 查看 Scheduler Lambda 日誌
-```
+正常會在 1–2 分鐘內收到 Telegram 推播。沒有財報的日子（週末、無科技公司公布）Lambda 會 log "no tech earnings tomorrow, skip push" 並 return 200，不會送訊息。
 
 ---
 
@@ -133,22 +94,18 @@ make logs-scheduler   # 查看 Scheduler Lambda 日誌
 
 | 資源類型 | 名稱 | 用途 |
 |----------|------|------|
-| API Gateway HTTP API | WebhookApi | 接收 Telegram webhook |
-| Lambda | `earnings-agent-webhook` | 接收請求、去重、轉發 SQS（10s timeout） |
-| Lambda | `earnings-agent-processor` | 執行 AI agent 對話（300s timeout） |
-| Lambda | `earnings-agent-scheduler` | 每日推播財報提醒（300s timeout） |
-| DynamoDB | `earnings-agent-conversations` | 對話歷史（有 TTL） |
-| DynamoDB | `earnings-agent-subscribers` | 推播訂閱者 |
-| DynamoDB | `earnings-agent-processed-updates` | Telegram update 去重（有 TTL） |
-| SQS | `earnings-agent-updates` | 非同步處理佇列 |
-| SQS (DLQ) | — | 失敗訊息暫存（保留 14 天） |
-| EventBridge | ScheduleRule | 每日 UTC 00:00 觸發 |
+| Lambda | `earnings-agent-scheduler` | 每日推播（300s timeout, 1024MB） |
+| EventBridge | ScheduleV2 | 每日 00:00 UTC 觸發 |
+| ECR | `schedulerfunction` | Lambda container image |
+
+沒有 API Gateway、SQS、DynamoDB、SSM。AWS 端基本上停留在免費額度內。
 
 ---
 
 ## 本地開發
 
 ```bash
-make dev    # 啟動 FastAPI 本地伺服器（port 8080）
-make test   # 執行測試（使用 moto mock AWS 服務）
+make test   # PYTHONPATH=src uv run pytest tests/ -v
 ```
+
+測試用 `pytest-mock` mock Finnhub HTTP 與 Gemini，不需要 AWS credentials。

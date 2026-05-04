@@ -1,34 +1,45 @@
 # Stock Earnings Agent
 
-Telegram AI agent that proactively notifies users about US stock earnings calls and answers questions in Traditional Chinese. Powered by Google Gemini (`gemini-2.5-flash`) with tool-use, deployed to AWS Lambda + API Gateway + SQS + DynamoDB via SAM.
+每日把隔天美股科技類股的財報日曆推播到單一 Telegram 帳號。Lambda 每天 00:00 UTC（08:00 Asia/Taipei）跑一次：抓 Finnhub earnings calendar、用 `/stock/profile2` 過濾出科技類股（Technology、Semiconductors、Software、Communications、Media、Telecommunication），再交給 Google Gemini (`gemini-2.5-flash`) 產生繁體中文摘要，最後送到 Telegram。
+
+架構極簡：1 個 Lambda + EventBridge + ECR，AWS 端費用幾乎為 $0。
 
 ## Quick start
 
 ```bash
-# 1. Local dev
-cp .env.example .env  # fill in keys
+# 1. 安裝 + 跑測試
 uv sync
 make test
-make dev              # starts FastAPI on :8080, point ngrok at it
 
-# 2. Set SSM params (one-time, in AWS account)
-make ssm-put \
-  FINNHUB_API_KEY=xxx \
-  GEMINI_API_KEY=xxx \
-  TELEGRAM_BOT_TOKEN=xxx \
-  TELEGRAM_WEBHOOK_SECRET=$(openssl rand -hex 32)
+# 2. 設環境變數（4 個都必填）
+export FINNHUB_API_KEY=...
+export GEMINI_API_KEY=...
+export TELEGRAM_BOT_TOKEN=...
+export TELEGRAM_CHAT_ID=...     # 你的數字 chat id
 
-# 3. Deploy
+# 3. 部署
 make build
-make deploy GUIDED=1   # first time only
+make deploy GUIDED=1            # 首次部署用 guided
+make deploy                     # 之後直接跑
 
-# 4. Wire Telegram to the API Gateway URL printed by the deploy
-make set-webhook \
-  TELEGRAM_BOT_TOKEN=xxx \
-  WEBHOOK_URL=https://xxx.execute-api.ap-northeast-1.amazonaws.com/webhook \
-  TELEGRAM_WEBHOOK_SECRET=$(aws ssm get-parameter --name /earnings-agent/telegram-webhook-secret --with-decryption --query Parameter.Value --output text)
+# 4. 驗證（手動觸發一次）
+make invoke-scheduler
+
+# 5. 看日誌
+make logs-scheduler
 ```
 
 ## Architecture
 
-See [plan.md](plan.md) for the design rationale. Webhook → SQS → Processor decouples Telegram's 60s timeout from Gemini's tool-use loop.
+```
+EventBridge (每日 00:00 UTC)
+        ↓
+SchedulerFunction (Lambda, 300s)
+        ↓ Finnhub /calendar/earnings
+        ↓ Finnhub /stock/profile2 (per symbol, filter to tech)
+        ↓ Gemini tool-use loop (中文摘要)
+        ↓ Telegram sendMessage
+   TELEGRAM_CHAT_ID
+```
+
+詳細部署流程見 [docs/deployment-flow.md](docs/deployment-flow.md)。
