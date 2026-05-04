@@ -30,3 +30,12 @@ def get_earnings_calendar(date_from: str, date_to: str) -> list[dict]:
     )
     r.raise_for_status()
     return r.json().get("earningsCalendar", [])[:100]
+
+
+def get_company_industry(symbol: str) -> str:
+    r = client().get(
+        "/stock/profile2",
+        params={"symbol": symbol, "token": finnhub_api_key()},
+    )
+    r.raise_for_status()
+    return r.json().get("finnhubIndustry", "")

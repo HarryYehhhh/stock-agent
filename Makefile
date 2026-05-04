@@ -17,7 +17,7 @@ build:
 	cd infra && sam build
 
 deploy:
-	cd infra && sam deploy --stack-name $(STACK) --region $(REGION) --capabilities CAPABILITY_IAM --resolve-image-repos $(if $(GUIDED),--guided,)
+	cd infra && sam deploy --stack-name $(STACK) --region $(REGION) --capabilities CAPABILITY_IAM --resolve-image-repos --resolve-s3 $(if $(GUIDED),--guided,)
 
 ssm-put:
 	@test -n "$(FINNHUB_API_KEY)" || (echo "FINNHUB_API_KEY missing" && exit 1)

@@ -54,6 +54,20 @@ def test_earnings_calls_finnhub_calendar(mock_http):
     assert kwargs["params"]["to"] == "2026-05-02"
 
 
+def test_get_company_industry_calls_profile2(mock_http):
+    mock_http.get.return_value = _resp({"finnhubIndustry": "Technology"})
+    out = earnings.get_company_industry("AAPL")
+    assert out == "Technology"
+    args, kwargs = mock_http.get.call_args
+    assert args[0] == "/stock/profile2"
+    assert kwargs["params"]["symbol"] == "AAPL"
+
+
+def test_get_company_industry_returns_empty_when_missing(mock_http):
+    mock_http.get.return_value = _resp({})
+    assert earnings.get_company_industry("UNKNOWN") == ""
+
+
 # --- estimates ---
 
 def test_estimates_combines_recommendation_and_eps(mock_http):
