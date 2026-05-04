@@ -28,29 +28,23 @@ def mocks(monkeypatch):
         "JPM": "Banking",
         "XOM": "Oil & Gas",
     }
-    calls = {}
 
     def fake_industry(symbol):
-        calls.setdefault("industry", []).append(symbol)
         return industries.get(symbol, "Unknown")
 
     fake_get_earnings = MagicMock()
-    fake_get_subs = MagicMock()
     fake_run_agent = MagicMock(return_value="summary text")
     fake_send = MagicMock()
 
     monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_get_earnings)
     monkeypatch.setattr(scheduler_handler, "get_company_industry", fake_industry)
-    monkeypatch.setattr(scheduler_handler, "get_all_active", fake_get_subs)
     monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
     monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
 
     return {
         "earnings": fake_get_earnings,
-        "subs": fake_get_subs,
         "agent": fake_run_agent,
         "send": fake_send,
-        "industry_calls": calls,
     }
 
 
@@ -68,7 +62,6 @@ def test_filters_non_tech_stocks(mocks):
         {"symbol": "NVDA"},
         {"symbol": "XOM"},
     ]
-    mocks["subs"].return_value = [111, 222]
 
     scheduler_handler.handler({}, CTX)
 
@@ -81,7 +74,9 @@ def test_filters_non_tech_stocks(mocks):
     assert "Technology" in prompt
     assert "Semiconductors" in prompt
 
-    assert mocks["send"].call_count == 2
+    mocks["send"].assert_called_once()
+    chat_id_arg = mocks["send"].call_args.args[0]
+    assert chat_id_arg == 12345
 
 
 def test_skips_push_when_all_filtered_out(mocks):
@@ -89,24 +84,12 @@ def test_skips_push_when_all_filtered_out(mocks):
 
     assert scheduler_handler.handler({}, CTX) == {"statusCode": 200}
 
-    mocks["subs"].assert_not_called()
-    mocks["agent"].assert_not_called()
-    mocks["send"].assert_not_called()
-
-
-def test_skips_when_no_subscribers(mocks):
-    mocks["earnings"].return_value = [{"symbol": "AAPL"}]
-    mocks["subs"].return_value = []
-
-    scheduler_handler.handler({}, CTX)
-
     mocks["agent"].assert_not_called()
     mocks["send"].assert_not_called()
 
 
 def test_industry_lookup_failure_treated_as_non_tech(mocks, monkeypatch):
     mocks["earnings"].return_value = [{"symbol": "BOOM"}, {"symbol": "AAPL"}]
-    mocks["subs"].return_value = [111]
 
     def industry(symbol):
         if symbol == "BOOM":

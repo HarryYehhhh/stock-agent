@@ -1,4 +1,4 @@
-"""EventBridge Scheduler Lambda: daily push of tomorrow's earnings to subscribers.
+"""EventBridge Scheduler Lambda: daily push of tomorrow's tech earnings.
 
 Runs once per day at 00:00 UTC (08:00 Asia/Taipei).
 """
@@ -10,7 +10,7 @@ from datetime import date, timedelta
 from aws_lambda_powertools import Logger
 
 from agent.agent import run_agent
-from agent.db.subscribers import get_all_active
+from agent.config import telegram_chat_id
 from agent.telegram_client import send_message
 from agent.tools.earnings import get_company_industry, get_earnings_calendar
 
@@ -56,11 +56,6 @@ def handler(event: dict, context) -> dict:
         logger.info("no tech earnings tomorrow, skip push")
         return {"statusCode": 200}
 
-    subscribers = get_all_active()
-    if not subscribers:
-        logger.info("no active subscribers, skip push")
-        return {"statusCode": 200}
-
     prompt = (
         f"明天（{tomorrow}）有以下美股科技類股公布財報：{earnings}\n\n"
         "請用繁體中文條列每家公司的：股票代號（產業類別）、財報時間（盤前/盤後）、"
@@ -71,10 +66,9 @@ def handler(event: dict, context) -> dict:
     summary = run_agent(prompt, [])
     body = f"📊 *明日科技股財報提醒（{tomorrow}）*\n\n{summary}"
 
-    for chat_id in subscribers:
-        try:
-            send_message(chat_id, body)
-        except Exception:
-            logger.exception("failed to push to %s", chat_id)
+    try:
+        send_message(telegram_chat_id(), body)
+    except Exception:
+        logger.exception("failed to push to telegram")
 
     return {"statusCode": 200}
