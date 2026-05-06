@@ -193,6 +193,6 @@ Resources:
 Outputs:
   WebhookUrl:
     Description: Public webhook URL for Telegram setWebhook
-    Value: !Sub "https://${WebhookApi}.execute-api.${Region}.amazonaws.com/webhook"
+    Value: !Sub "https://${WebhookApi}.execute-api.${Region}.amazonaws.com/prod/webhook"
   UpdatesQueueUrl:
     Value: !Ref UpdatesQueue
