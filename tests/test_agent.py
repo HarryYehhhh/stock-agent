@@ -94,7 +94,12 @@ def test_build_tools_returns_list():
     assert len(tools) == 1
     declarations = tools[0].function_declarations
     names = {d.name for d in declarations}
-    assert names == {"get_earnings_calendar", "get_analyst_estimates", "get_stock_news"}
+    assert names == {
+        "get_earnings_calendar",
+        "get_analyst_estimates",
+        "get_stock_news",
+        "get_quote",
+    }
 
 
 def test_simple_text_response(mock_client):
