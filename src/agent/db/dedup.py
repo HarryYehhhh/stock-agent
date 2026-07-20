@@ -14,8 +14,7 @@ import boto3
 from botocore.exceptions import ClientError
 
 from agent.config import aws_region, processed_updates_table
-
-DEDUP_TTL_SECONDS = 3600
+from agent.db.backend import DEDUP_TTL_SECONDS, get_backend, selected_backend_name
 
 
 @lru_cache(maxsize=1)
@@ -25,6 +24,9 @@ def _table():
 
 def claim_update_id(update_id: int) -> bool:
     """Atomically claim an update_id. Returns True if first time, False if duplicate."""
+    if selected_backend_name() == "local":
+        return get_backend().claim_update_id(update_id)
+
     try:
         _table().put_item(
             Item={"update_id": update_id, "ttl": int(time.time()) + DEDUP_TTL_SECONDS},
