@@ -78,6 +78,53 @@ class LocalSQLiteBackend:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    ticker TEXT PRIMARY KEY,
+                    exchange TEXT NOT NULL,
+                    position INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS earnings_calendar (
+                    symbol TEXT NOT NULL,
+                    earning_date TEXT NOT NULL,
+                    extended_hour TEXT,
+                    eps_estimate REAL,
+                    revenue_estimate REAL,
+                    PRIMARY KEY (symbol, earning_date)
+                )
+                """
+            )
+            self._seed_watchlist(conn)
+
+    def _seed_watchlist(self, conn: sqlite3.Connection) -> None:
+        from agent.db.watchlist import DEFAULT_WATCHLIST
+
+        rows = [
+            (item["ticker"], item["exchange"], position)
+            for position, item in enumerate(DEFAULT_WATCHLIST)
+        ]
+        conn.executemany(
+            """
+            INSERT INTO watchlist (ticker, exchange, position)
+            VALUES (?, ?, ?)
+            ON CONFLICT(ticker) DO UPDATE SET
+                exchange = excluded.exchange,
+                position = excluded.position
+            """,
+            rows,
+        )
+        conn.execute(
+            f"""
+            DELETE FROM watchlist
+            WHERE ticker NOT IN ({",".join("?" for _ in rows)})
+            """,
+            [ticker for ticker, _, _ in rows],
+        )
 
     def save_message(self, chat_id: str, role: str, content: str) -> None:
         with self._connect() as conn:
@@ -143,6 +190,47 @@ class LocalSQLiteBackend:
                 "SELECT chat_id FROM subscribers WHERE active = 1 ORDER BY chat_id"
             ).fetchall()
         return [row["chat_id"] for row in rows]
+
+    def get_watchlist(self) -> list[dict[str, str]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT exchange, ticker
+                FROM watchlist
+                ORDER BY position
+                """
+            ).fetchall()
+        return [{"exchange": row["exchange"], "ticker": row["ticker"]} for row in rows]
+
+    def upsert_earnings_calendar(self, items: list[dict[str, Any]]) -> None:
+        rows = [
+            (
+                item["symbol"].upper(),
+                item["date"],
+                item.get("hour"),
+                item.get("epsEstimate"),
+                item.get("revenueEstimate"),
+            )
+            for item in items
+            if item.get("symbol") and item.get("date")
+        ]
+        if not rows:
+            return
+
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT INTO earnings_calendar (
+                    symbol, earning_date, extended_hour, eps_estimate, revenue_estimate
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, earning_date) DO UPDATE SET
+                    extended_hour = excluded.extended_hour,
+                    eps_estimate = excluded.eps_estimate,
+                    revenue_estimate = excluded.revenue_estimate
+                """,
+                rows,
+            )
 
     def claim_update_id(self, update_id: int) -> bool:
         try:

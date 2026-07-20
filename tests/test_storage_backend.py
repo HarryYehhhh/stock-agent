@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 
 from tests.conftest import clear_db_caches
@@ -41,3 +43,41 @@ def test_invalid_storage_backend_fails(monkeypatch):
 
     with pytest.raises(ValueError, match="Unsupported STORAGE_BACKEND"):
         selected_backend_name()
+
+
+def test_local_backend_upserts_earnings_calendar(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.upsert_earnings_calendar(
+        [
+            {
+                "symbol": "aapl",
+                "date": "2026-07-23",
+                "hour": "amc",
+                "epsEstimate": 1.42,
+                "revenueEstimate": 82000000000,
+            }
+        ]
+    )
+    backend.upsert_earnings_calendar(
+        [
+            {
+                "symbol": "AAPL",
+                "date": "2026-07-23",
+                "hour": "bmo",
+                "epsEstimate": 1.5,
+                "revenueEstimate": 83000000000,
+            }
+        ]
+    )
+
+    with sqlite3.connect(local_store) as conn:
+        rows = conn.execute(
+            """
+            SELECT symbol, earning_date, extended_hour, eps_estimate, revenue_estimate
+            FROM earnings_calendar
+            """
+        ).fetchall()
+
+    assert rows == [("AAPL", "2026-07-23", "bmo", 1.5, 83000000000)]

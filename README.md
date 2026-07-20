@@ -10,6 +10,7 @@ cp .env.example .env  # fill in keys
 uv sync
 make test
 make dev              # starts FastAPI on :8080, point ngrok at it
+curl 'http://127.0.0.1:8080/earnings?date_from=2026-07-20&date_to=2026-07-24&symbol=AAPL'
 
 # 2. Set SSM params (one-time, in AWS account)
 make ssm-put \
