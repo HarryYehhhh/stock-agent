@@ -81,13 +81,3 @@ See `.env.example`. Required keys: `GEMINI_API_KEY`, `FINNHUB_API_KEY`, `TELEGRA
 - [x] Telegram update dedup
 - [x] SAM deploy（Lambda + API Gateway + SQS + EventBridge）
 
-### TODO
-- [ ] 每天 08:00 推播隔天財報提醒（scheduler_handler）
-- [ ] `/subscribe` 與 `/unsubscribe` 指令
-
-### Phase 2
-- [ ] 用戶自訂 watchlist（`/watch`、`/unwatch`、`/mylist`）
-- [ ] 股價即時查詢 tool（`get_quote`）
-- [ ] 財報電話會議逐字稿摘要
-- [ ] 技術指標 tool（RSI、MA、布林通道）
-- [ ] CloudWatch Dashboard 監控
