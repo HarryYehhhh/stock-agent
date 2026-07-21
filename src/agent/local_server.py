@@ -15,6 +15,7 @@ from json import JSONDecodeError
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 
+from agent.market_summary import generate_market_summary, list_stored_news, refresh_news
 from agent.processor_handler import _process_update
 from agent.tools.earnings import get_earnings_calendar
 from agent.webhook_handler import handler as webhook_handler
@@ -42,6 +43,23 @@ async def webhook(request: Request) -> Response:
 @app.get("/health")
 async def health() -> dict:
     return {"ok": True}
+
+
+@app.get("/market-summary")
+async def market_summary(days_back: int = Query(1, ge=1, le=7)) -> dict:
+    try:
+        stored = refresh_news(days_back)
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Finnhub upstream timeout") from exc
+    result = generate_market_summary(days_back)
+    result["stored_news"] = stored
+    return result
+
+
+@app.get("/news")
+async def news(days_back: int = Query(1, ge=1, le=7)) -> dict:
+    items = list_stored_news(days_back)
+    return {"count": len(items), "news": items}
 
 
 @app.get("/earnings")

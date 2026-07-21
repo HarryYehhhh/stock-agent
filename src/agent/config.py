@@ -16,7 +16,7 @@ import boto3
 SSM_PREFIX = "/earnings-agent"
 SSM_PARAM_NAMES = [
     f"{SSM_PREFIX}/finnhub-api-key",
-    f"{SSM_PREFIX}/gemini-api-key",
+    f"{SSM_PREFIX}/groq-api-key",
     f"{SSM_PREFIX}/telegram-bot-token",
     f"{SSM_PREFIX}/telegram-webhook-secret",
 ]
@@ -35,7 +35,7 @@ def _load_secrets() -> dict[str, str]:
 
     return {
         "finnhub-api-key": os.environ["FINNHUB_API_KEY"],
-        "gemini-api-key": os.environ["GEMINI_API_KEY"],
+        "groq-api-key": os.environ["GROQ_API_KEY"],
         "telegram-bot-token": os.environ["TELEGRAM_BOT_TOKEN"],
         "telegram-webhook-secret": os.environ["TELEGRAM_WEBHOOK_SECRET"],
     }
@@ -45,8 +45,8 @@ def finnhub_api_key() -> str:
     return _load_secrets()["finnhub-api-key"]
 
 
-def gemini_api_key() -> str:
-    return _load_secrets()["gemini-api-key"]
+def groq_api_key() -> str:
+    return _load_secrets()["groq-api-key"]
 
 
 def telegram_bot_token() -> str:

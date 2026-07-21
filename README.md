@@ -1,6 +1,6 @@
 # Stock Earnings Agent
 
-Telegram AI agent that proactively notifies users about US stock earnings calls and answers questions in Traditional Chinese. Powered by Google Gemini (`gemini-2.5-flash`) with tool-use, deployed to AWS Lambda + API Gateway + SQS + DynamoDB via SAM.
+Telegram AI agent that proactively notifies users about US stock earnings calls and answers questions in Traditional Chinese. Powered by Groq (`llama-3.3-70b-versatile`) with tool-use, deployed to AWS Lambda + API Gateway + SQS + DynamoDB via SAM.
 
 ## Quick start
 
@@ -15,7 +15,7 @@ curl 'http://127.0.0.1:8080/earnings?date_from=2026-07-20&date_to=2026-07-24&sym
 # 2. Set SSM params (one-time, in AWS account)
 make ssm-put \
   FINNHUB_API_KEY=xxx \
-  GEMINI_API_KEY=xxx \
+  GROQ_API_KEY=xxx \
   TELEGRAM_BOT_TOKEN=xxx \
   TELEGRAM_WEBHOOK_SECRET=$(openssl rand -hex 32)
 
@@ -32,4 +32,4 @@ make set-webhook \
 
 ## Architecture
 
-See [plan.md](plan.md) for the design rationale. Webhook → SQS → Processor decouples Telegram's 60s timeout from Gemini's tool-use loop.
+See [plan.md](plan.md) for the design rationale. Webhook → SQS → Processor decouples Telegram's 60s timeout from Groq's tool-use loop.

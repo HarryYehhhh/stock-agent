@@ -20,14 +20,14 @@ Run a single test: `PYTHONPATH=src uv run pytest tests/test_agent.py -v -k test_
 
 ## Architecture
 
-Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. Uses Google Gemini (`gemini-2.5-flash`) with tool-use loop via `google-genai` SDK.
+Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. Uses Groq (`llama-3.3-70b-versatile`) with tool-use loop via the `groq` SDK.
 
-**Request flow:** Telegram webhook → `webhook_handler` (Lambda, 10s) → SQS → `processor_handler` (Lambda, 300s) → `run_agent()` → Gemini tool-use loop (max 10 iterations) → Telegram reply. The SQS decoupling prevents Telegram's 60s timeout from killing long agent runs.
+**Request flow:** Telegram webhook → `webhook_handler` (Lambda, 10s) → SQS → `processor_handler` (Lambda, 300s) → `run_agent()` → Groq tool-use loop (max 10 iterations) → Telegram reply. The SQS decoupling prevents Telegram's 60s timeout from killing long agent runs.
 
 **Third Lambda:** `scheduler_handler` fires daily via EventBridge to push earnings reminders to subscribers.
 
 **Key modules under `src/agent/`:**
-- `agent.py` — Gemini tool-use loop with function calling; `run_agent()` is the core entry point
+- `agent.py` — Groq tool-use loop with function calling; `run_agent()` is the core entry point
 - `tools/` — Three tools: `get_earnings_calendar`, `get_analyst_estimates`, `get_stock_news` (all hit Finnhub API). Tool schemas are defined in each module and aggregated in `tools/__init__.py` as `ALL_TOOL_SCHEMAS` / `TOOL_FUNCTIONS`
 - `db/` — DynamoDB access via boto3 resource API with `@lru_cache` table singletons: `conversations` (chat history, 20-message limit, 30-day TTL), `subscribers` (push notifications), `dedup` (Telegram update deduplication via conditional put)
 - `config.py` — Reads from SSM Parameter Store in Lambda (`/earnings-agent/` prefix), falls back to env vars locally. All accessors are `@lru_cache`
@@ -40,13 +40,13 @@ Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. 
 
 ## Testing
 
-Tests use `moto` to mock AWS services (DynamoDB, SQS) and `pytest-mock` for Gemini API / Finnhub calls. Fixtures in `tests/conftest.py` auto-create all tables and queues. Tests never hit real AWS or external APIs.
+Tests use `moto` to mock AWS services (DynamoDB, SQS) and `pytest-mock` for Groq API / Finnhub calls. Fixtures in `tests/conftest.py` auto-create all tables and queues. Tests never hit real AWS or external APIs.
 
 Integration tests that cross the local SQLite/filesystem boundary and Finnhub HTTP client boundary live in `tests/test_local_integration.py`. They use the `finnhub_stub` fixture, an in-process `ThreadingHTTPServer`, to assert outbound method/path/query and return controlled Finnhub responses. Do not call the real Finnhub API in tests.
 
 ## Environment Variables
 
-See `.env.example`. Required keys: `GEMINI_API_KEY`, `FINNHUB_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`. In production these come from SSM Parameter Store under `/earnings-agent/` prefix. Table names and queue URL have env var fallbacks for local dev.
+See `.env.example`. Required keys: `GROQ_API_KEY`, `FINNHUB_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`. In production these come from SSM Parameter Store under `/earnings-agent/` prefix. Table names and queue URL have env var fallbacks for local dev.
 
 ## Coding Guidelines
 

@@ -1,6 +1,6 @@
 """Common fixtures: stub env vars, then start moto for AWS resources.
 
-Tests must not hit real AWS / Gemini / Finnhub.
+Tests must not hit real AWS / Groq / Finnhub.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def env(monkeypatch):
     monkeypatch.setenv("SUBSCRIBERS_TABLE", SUBSCRIBERS)
     monkeypatch.setenv("PROCESSED_UPDATES_TABLE", PROCESSED)
     monkeypatch.setenv("FINNHUB_API_KEY", "fake-finnhub")
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+    monkeypatch.setenv("GROQ_API_KEY", "fake-groq")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "fake-secret")
     monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
