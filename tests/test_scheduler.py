@@ -1,4 +1,4 @@
-"""Scheduler handler tests: tech-only filtering of daily earnings push."""
+"""Scheduler handler tests: fixed watchlist daily earnings push."""
 
 from __future__ import annotations
 
@@ -21,26 +21,21 @@ CTX = _Ctx()
 
 @pytest.fixture
 def mocks(monkeypatch):
-    industries = {
-        "AAPL": "Technology",
-        "NVDA": "Semiconductors",
-        "MSFT": "Software",
-        "JPM": "Banking",
-        "XOM": "Oil & Gas",
-    }
-    calls = {}
-
-    def fake_industry(symbol):
-        calls.setdefault("industry", []).append(symbol)
-        return industries.get(symbol, "Unknown")
-
     fake_get_earnings = MagicMock()
     fake_get_subs = MagicMock()
     fake_run_agent = MagicMock(return_value="summary text")
     fake_send = MagicMock()
 
+    monkeypatch.setattr(
+        scheduler_handler,
+        "get_watchlist",
+        lambda: [
+            {"exchange": "NASDAQGS", "ticker": "AAPL"},
+            {"exchange": "NASDAQGS", "ticker": "NVDA"},
+            {"exchange": "NASDAQGM", "ticker": "QQQ"},
+        ],
+    )
     monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_get_earnings)
-    monkeypatch.setattr(scheduler_handler, "get_company_industry", fake_industry)
     monkeypatch.setattr(scheduler_handler, "get_all_active", fake_get_subs)
     monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
     monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
@@ -50,24 +45,30 @@ def mocks(monkeypatch):
         "subs": fake_get_subs,
         "agent": fake_run_agent,
         "send": fake_send,
-        "industry_calls": calls,
     }
 
 
-def test_skips_when_no_earnings(mocks):
+def test_skips_when_watchlist_has_no_earnings(mocks):
     mocks["earnings"].return_value = []
     assert scheduler_handler.handler({}, CTX) == {"statusCode": 200}
+    assert [call.kwargs["symbol"] for call in mocks["earnings"].call_args_list] == [
+        "AAPL",
+        "NVDA",
+        "QQQ",
+    ]
     mocks["agent"].assert_not_called()
     mocks["send"].assert_not_called()
 
 
-def test_filters_non_tech_stocks(mocks):
-    mocks["earnings"].return_value = [
-        {"symbol": "AAPL"},
-        {"symbol": "JPM"},
-        {"symbol": "NVDA"},
-        {"symbol": "XOM"},
-    ]
+def test_pushes_only_watchlist_symbols_with_earnings(mocks):
+    def earnings(_date_from, _date_to, symbol):
+        if symbol == "AAPL":
+            return [{"symbol": "AAPL", "hour": "amc"}]
+        if symbol == "NVDA":
+            return [{"symbol": "NVDA", "hour": "bmo"}]
+        return []
+
+    mocks["earnings"].side_effect = earnings
     mocks["subs"].return_value = [111, 222]
 
     scheduler_handler.handler({}, CTX)
@@ -75,27 +76,20 @@ def test_filters_non_tech_stocks(mocks):
     prompt = mocks["agent"].call_args.args[0]
     assert "AAPL" in prompt
     assert "NVDA" in prompt
-    assert "JPM" not in prompt
-    assert "XOM" not in prompt
-    assert "科技類股" in prompt
-    assert "Technology" in prompt
-    assert "Semiconductors" in prompt
+    assert "QQQ" not in prompt
+    assert "NASDAQGS" in prompt
+    assert "固定追蹤清單" in prompt
+    assert "不要自行挑選或省略" in prompt
+    assert "5-10" not in prompt
 
     assert mocks["send"].call_count == 2
 
 
-def test_skips_push_when_all_filtered_out(mocks):
-    mocks["earnings"].return_value = [{"symbol": "JPM"}, {"symbol": "XOM"}]
-
-    assert scheduler_handler.handler({}, CTX) == {"statusCode": 200}
-
-    mocks["subs"].assert_not_called()
-    mocks["agent"].assert_not_called()
-    mocks["send"].assert_not_called()
-
-
 def test_skips_when_no_subscribers(mocks):
-    mocks["earnings"].return_value = [{"symbol": "AAPL"}]
+    def earnings(_date_from, _date_to, symbol):
+        return [{"symbol": symbol}]
+
+    mocks["earnings"].side_effect = earnings
     mocks["subs"].return_value = []
 
     scheduler_handler.handler({}, CTX)
@@ -104,19 +98,18 @@ def test_skips_when_no_subscribers(mocks):
     mocks["send"].assert_not_called()
 
 
-def test_industry_lookup_failure_treated_as_non_tech(mocks, monkeypatch):
-    mocks["earnings"].return_value = [{"symbol": "BOOM"}, {"symbol": "AAPL"}]
-    mocks["subs"].return_value = [111]
-
-    def industry(symbol):
-        if symbol == "BOOM":
+def test_symbol_lookup_failure_does_not_stop_other_watchlist_symbols(mocks):
+    def earnings(_date_from, _date_to, symbol):
+        if symbol == "AAPL":
             raise RuntimeError("boom")
-        return "Technology"
+        if symbol == "NVDA":
+            return [{"symbol": "NVDA"}]
+        return []
 
-    monkeypatch.setattr(scheduler_handler, "get_company_industry", industry)
-
+    mocks["earnings"].side_effect = earnings
+    mocks["subs"].return_value = [111]
     scheduler_handler.handler({}, CTX)
 
     prompt = mocks["agent"].call_args.args[0]
-    assert "AAPL" in prompt
-    assert "BOOM" not in prompt
+    assert "NVDA" in prompt
+    assert "AAPL" not in prompt

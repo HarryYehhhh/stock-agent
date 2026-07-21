@@ -15,6 +15,7 @@ from agent.tools import earnings, estimates, news, quote
 @pytest.fixture
 def mock_http(monkeypatch):
     client = MagicMock()
+    monkeypatch.setenv("STORAGE_BACKEND", "dynamodb")
     monkeypatch.setattr(tools_http, "_client", client)
     monkeypatch.setattr(tools_http, "client", lambda: client)
     return client
@@ -142,4 +143,3 @@ def test_get_quote_returns_normalized_fields(mock_http):
     args, kwargs = mock_http.get.call_args
     assert args[0] == "/quote"
     assert kwargs["params"]["symbol"] == "AAPL"
-

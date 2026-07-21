@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from agent.config import finnhub_api_key
+from agent.db.backend import get_backend, selected_backend_name
 from agent.tools._http import client
 
 EARNINGS_TOOL = {
@@ -37,7 +38,10 @@ def get_earnings_calendar(
     # Defensive client-side filter in case Finnhub ignores the symbol param on free tier
     if symbol:
         items = [it for it in items if (it.get("symbol") or "").upper() == symbol.upper()]
-    return items[:100]
+    items = items[:100]
+    if selected_backend_name() == "local":
+        get_backend().upsert_earnings_calendar(items)
+    return items
 
 
 def get_company_industry(symbol: str) -> str:

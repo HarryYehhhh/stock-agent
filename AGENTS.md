@@ -7,6 +7,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 ```bash
 make install          # uv sync
 make test             # PYTHONPATH=src uv run pytest tests/ -v
+PYTHONPATH=src uv run pytest tests/test_local_integration.py -v  # integration: local SQLite + in-process Finnhub HTTP stub, no real external APIs
 make dev              # FastAPI local server on :8080 (needs .env from .env.example)
 make build            # cd infra && sam build
 make deploy           # SAM deploy to AWS (add GUIDED=1 for first time)
@@ -40,6 +41,8 @@ Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. 
 ## Testing
 
 Tests use `moto` to mock AWS services (DynamoDB, SQS) and `pytest-mock` for Gemini API / Finnhub calls. Fixtures in `tests/conftest.py` auto-create all tables and queues. Tests never hit real AWS or external APIs.
+
+Integration tests that cross the local SQLite/filesystem boundary and Finnhub HTTP client boundary live in `tests/test_local_integration.py`. They use the `finnhub_stub` fixture, an in-process `ThreadingHTTPServer`, to assert outbound method/path/query and return controlled Finnhub responses. Do not call the real Finnhub API in tests.
 
 ## Environment Variables
 

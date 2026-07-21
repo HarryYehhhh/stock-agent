@@ -33,11 +33,26 @@ def env(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot")
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "fake-secret")
     monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
+    monkeypatch.delenv("STORAGE_BACKEND", raising=False)
+    monkeypatch.delenv("LOCAL_STORE_PATH", raising=False)
+
+
+def clear_db_caches() -> None:
+    from agent import config as cfg, webhook_handler
+    from agent.db import backend, conversations, dedup, subscribers
+
+    cfg._load_secrets.cache_clear()
+    backend.get_backend.cache_clear()
+    dedup._table.cache_clear()
+    conversations._table.cache_clear()
+    subscribers._table.cache_clear()
+    webhook_handler._sqs.cache_clear()
 
 
 @pytest.fixture
 def aws():
     with mock_aws():
+        os.environ["STORAGE_BACKEND"] = "dynamodb"
         ddb = boto3.resource("dynamodb", region_name=REGION)
         ddb.create_table(
             TableName=CONVERSATIONS,
@@ -68,13 +83,18 @@ def aws():
         os.environ["UPDATES_QUEUE_URL"] = queue_url
 
         # Reset cached boto3/httpx clients in each test so they pick up the moto env.
-        from agent import config as cfg, webhook_handler
-        from agent.db import conversations, dedup, subscribers
-
-        cfg._load_secrets.cache_clear()
-        dedup._table.cache_clear()
-        conversations._table.cache_clear()
-        subscribers._table.cache_clear()
-        webhook_handler._sqs.cache_clear()
+        clear_db_caches()
 
         yield {"sqs": sqs, "queue_url": queue_url, "ddb": ddb}
+
+        clear_db_caches()
+
+
+@pytest.fixture
+def local_store(monkeypatch, tmp_path):
+    store_path = tmp_path / "store.sqlite3"
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("LOCAL_STORE_PATH", str(store_path))
+    clear_db_caches()
+    yield store_path
+    clear_db_caches()

@@ -16,8 +16,12 @@ import boto3
 from boto3.dynamodb.conditions import Key
 
 from agent.config import aws_region, conversations_table
+from agent.db.backend import (
+    CONVERSATION_TTL_SECONDS,
+    get_backend,
+    selected_backend_name,
+)
 
-CONVERSATION_TTL_SECONDS = 30 * 24 * 3600
 HISTORY_LIMIT = 20
 
 
@@ -27,6 +31,10 @@ def _table():
 
 
 def save_message(chat_id: str, role: str, content: str) -> None:
+    if selected_backend_name() == "local":
+        get_backend().save_message(chat_id, role, content)
+        return
+
     _table().put_item(
         Item={
             "chat_id": chat_id,
@@ -40,6 +48,9 @@ def save_message(chat_id: str, role: str, content: str) -> None:
 
 def get_history(chat_id: str, limit: int = HISTORY_LIMIT) -> list[dict]:
     """Return up to `limit` recent messages, oldest first."""
+    if selected_backend_name() == "local":
+        return get_backend().get_history(chat_id, limit)
+
     resp = _table().query(
         KeyConditionExpression=Key("chat_id").eq(chat_id),
         ScanIndexForward=False,
