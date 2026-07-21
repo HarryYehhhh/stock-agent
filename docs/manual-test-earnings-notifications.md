@@ -142,3 +142,9 @@ Telegram 推播、冪等（重跑不重發）、Finnhub 失敗時的 ⚠️ 警�
 | 3. Join 查詢 | | |
 | 4. Sync 失敗回報 | | |
 | 5. REST endpoint（選測） | | |
+
+## 測試通過後
+
+情境 1–4 全部 pass（情境 5 為選測）即可直接 merge PR #9
+（https://github.com/HarryYehhhh/stock-agent/pull/9 ，`feat/earnings-notifications` → `main`）。
+有任何 fail 則不要 merge，將結果表回填後回報。
