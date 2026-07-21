@@ -1,4 +1,4 @@
-.PHONY: install test lint dev build deploy set-webhook logs-webhook logs-processor logs-scheduler ssm-put
+.PHONY: install test lint dev notify-earnings build deploy set-webhook logs-webhook logs-processor logs-scheduler ssm-put
 
 REGION ?= ap-northeast-1
 STACK ?= earnings-agent
@@ -12,6 +12,9 @@ test:
 dev:
 	cp -n .env.example .env || true
 	uv run uvicorn agent.local_server:app --reload --port 8080
+
+notify-earnings:
+	PYTHONPATH=src uv run python -m agent.scheduler_handler
 
 build:
 	cd infra && sam build

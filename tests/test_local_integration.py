@@ -2,6 +2,7 @@ import json
 import sqlite3
 import threading
 import time
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
@@ -52,11 +53,15 @@ def test_processor_subscribe_and_scheduler_share_local_store(local_store, monkey
     fake_send = MagicMock()
     monkeypatch.setattr(processor_handler, "send_message", fake_send)
     monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
-    monkeypatch.setattr(
-        scheduler_handler,
-        "get_earnings_calendar",
-        lambda *_, symbol: [{"symbol": symbol}] if symbol == "AAPL" else [],
-    )
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+
+    def fake_earnings(*_, symbol):
+        # Mimics the real tool: persists fetched rows into the local store.
+        items = [{"symbol": symbol, "date": tomorrow}] if symbol == "AAPL" else []
+        get_backend().upsert_earnings_calendar(items)
+        return items
+
+    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_earnings)
     monkeypatch.setattr(scheduler_handler, "run_agent", lambda *_: "summary")
 
     processor_handler._process_update({"message": {"chat": {"id": 777}, "text": "/subscribe"}})

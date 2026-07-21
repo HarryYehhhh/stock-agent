@@ -79,5 +79,84 @@ def test_local_backend_upserts_earnings_calendar(local_store):
             FROM earnings_calendar
             """
         ).fetchall()
+        updated_at = conn.execute(
+            "SELECT updated_at FROM earnings_calendar"
+        ).fetchone()[0]
 
     assert rows == [("AAPL", "2026-07-23", "bmo", 1.5, 83000000000)]
+    assert updated_at is not None
+
+
+def test_schema_migration_of_pre_existing_store(monkeypatch, tmp_path):
+    store_path = tmp_path / "old.sqlite3"
+    with sqlite3.connect(store_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE earnings_calendar (
+                symbol TEXT NOT NULL,
+                earning_date TEXT NOT NULL,
+                extended_hour TEXT,
+                eps_estimate REAL,
+                revenue_estimate REAL,
+                PRIMARY KEY (symbol, earning_date)
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO earnings_calendar VALUES ('AAPL', '2026-07-23', 'amc', 1.4, 82000000000)"
+        )
+
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("LOCAL_STORE_PATH", str(store_path))
+    clear_db_caches()
+    from agent.db.backend import get_backend
+
+    get_backend()
+
+    with sqlite3.connect(store_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(earnings_calendar)")}
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        }
+        indexes = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
+        }
+        row = conn.execute(
+            "SELECT symbol, updated_at FROM earnings_calendar"
+        ).fetchone()
+
+    assert "updated_at" in columns
+    assert "earnings_notifications" in tables
+    assert "idx_earnings_date" in indexes
+    assert row == ("AAPL", None)
+
+    clear_db_caches()
+
+
+def test_watchlist_earnings_join_and_notification_tracking(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.upsert_earnings_calendar(
+        [
+            {"symbol": "NVDA", "date": "2026-07-23", "hour": "amc"},
+            {"symbol": "AAPL", "date": "2026-07-23", "hour": "bmo"},
+            {"symbol": "ZZZZ", "date": "2026-07-23", "hour": "bmo"},
+            {"symbol": "AAPL", "date": "2026-08-01", "hour": "amc"},
+        ]
+    )
+
+    rows = backend.get_watchlist_earnings_for_date("2026-07-23")
+
+    # Only watchlist symbols on the requested date, in watchlist position order.
+    assert [row["symbol"] for row in rows] == ["AAPL", "NVDA"]
+    assert rows[0]["exchange"] == "NASDAQGS"
+    assert rows[0]["updated_at"] is not None
+
+    symbols = ["AAPL", "NVDA"]
+    assert backend.unnotified_symbols("111", symbols, "2026-07-23") == symbols
+    backend.mark_notified("111", symbols, "2026-07-23")
+    assert backend.unnotified_symbols("111", symbols, "2026-07-23") == []
+    assert backend.unnotified_symbols("222", symbols, "2026-07-23") == symbols

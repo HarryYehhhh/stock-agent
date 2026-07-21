@@ -95,7 +95,34 @@ class LocalSQLiteBackend:
                     extended_hour TEXT,
                     eps_estimate REAL,
                     revenue_estimate REAL,
+                    updated_at TEXT,
                     PRIMARY KEY (symbol, earning_date)
+                )
+                """
+            )
+            # Migrate pre-existing DBs created before updated_at existed.
+            columns = {
+                row["name"]
+                for row in conn.execute("PRAGMA table_info(earnings_calendar)")
+            }
+            if "updated_at" not in columns:
+                conn.execute(
+                    "ALTER TABLE earnings_calendar ADD COLUMN updated_at TEXT"
+                )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_earnings_date
+                ON earnings_calendar (earning_date)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS earnings_notifications (
+                    chat_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    earning_date TEXT NOT NULL,
+                    sent_at TEXT NOT NULL,
+                    PRIMARY KEY (chat_id, symbol, earning_date)
                 )
                 """
             )
@@ -203,6 +230,7 @@ class LocalSQLiteBackend:
         return [{"exchange": row["exchange"], "ticker": row["ticker"]} for row in rows]
 
     def upsert_earnings_calendar(self, items: list[dict[str, Any]]) -> None:
+        updated_at = datetime.now(timezone.utc).isoformat()
         rows = [
             (
                 item["symbol"].upper(),
@@ -210,6 +238,7 @@ class LocalSQLiteBackend:
                 item.get("hour"),
                 item.get("epsEstimate"),
                 item.get("revenueEstimate"),
+                updated_at,
             )
             for item in items
             if item.get("symbol") and item.get("date")
@@ -221,15 +250,65 @@ class LocalSQLiteBackend:
             conn.executemany(
                 """
                 INSERT INTO earnings_calendar (
-                    symbol, earning_date, extended_hour, eps_estimate, revenue_estimate
+                    symbol, earning_date, extended_hour, eps_estimate,
+                    revenue_estimate, updated_at
                 )
-                VALUES (?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol, earning_date) DO UPDATE SET
                     extended_hour = excluded.extended_hour,
                     eps_estimate = excluded.eps_estimate,
-                    revenue_estimate = excluded.revenue_estimate
+                    revenue_estimate = excluded.revenue_estimate,
+                    updated_at = excluded.updated_at
                 """,
                 rows,
+            )
+
+    def get_watchlist_earnings_for_date(self, earning_date: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT w.ticker AS symbol, w.exchange, e.earning_date,
+                       e.extended_hour, e.eps_estimate, e.revenue_estimate,
+                       e.updated_at
+                FROM watchlist w
+                JOIN earnings_calendar e ON e.symbol = w.ticker
+                WHERE e.earning_date = ?
+                ORDER BY w.position
+                """,
+                (earning_date,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def unnotified_symbols(
+        self, chat_id: str, symbols: list[str], earning_date: str
+    ) -> list[str]:
+        if not symbols:
+            return []
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT symbol FROM earnings_notifications
+                WHERE chat_id = ? AND earning_date = ?
+                  AND symbol IN ({",".join("?" for _ in symbols)})
+                """,
+                (chat_id, earning_date, *symbols),
+            ).fetchall()
+        notified = {row["symbol"] for row in rows}
+        return [s for s in symbols if s not in notified]
+
+    def mark_notified(
+        self, chat_id: str, symbols: list[str], earning_date: str
+    ) -> None:
+        sent_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.executemany(
+                """
+                INSERT OR IGNORE INTO earnings_notifications (
+                    chat_id, symbol, earning_date, sent_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                [(chat_id, symbol, earning_date, sent_at) for symbol in symbols],
             )
 
     def claim_update_id(self, update_id: int) -> bool:
