@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 import time
@@ -113,6 +114,36 @@ class LocalSQLiteBackend:
                 """
                 CREATE INDEX IF NOT EXISTS idx_earnings_date
                 ON earnings_calendar (earning_date)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS news (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    category TEXT NOT NULL,
+                    symbol TEXT,
+                    headline TEXT NOT NULL UNIQUE,
+                    summary TEXT NOT NULL,
+                    url TEXT,
+                    published_at TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_news_published
+                ON news (published_at)
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS market_summaries (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    created_at TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    news_ids TEXT NOT NULL
+                )
                 """
             )
             conn.execute(
@@ -310,6 +341,61 @@ class LocalSQLiteBackend:
                 """,
                 [(chat_id, symbol, earning_date, sent_at) for symbol in symbols],
             )
+
+    def insert_news(self, items: list[dict[str, Any]]) -> int:
+        """Insert news rows, ignoring duplicate headlines. Returns rows inserted."""
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        inserted = 0
+        with self._connect() as conn:
+            for it in items:
+                cur = conn.execute(
+                    """
+                    INSERT OR IGNORE INTO news (
+                        category, symbol, headline, summary, url,
+                        published_at, fetched_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        it["category"],
+                        it.get("symbol"),
+                        it["headline"],
+                        it.get("summary", ""),
+                        it.get("url"),
+                        it["published_at"],
+                        fetched_at,
+                    ),
+                )
+                inserted += cur.rowcount
+        return inserted
+
+    def list_news_since(self, published_from: str) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, category, symbol, headline, summary, url, published_at
+                FROM news
+                WHERE published_at >= ?
+                ORDER BY published_at DESC
+                """,
+                (published_from,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def insert_market_summary(self, summary: str, news_ids: list[int]) -> int:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                INSERT INTO market_summaries (created_at, summary, news_ids)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    datetime.now(timezone.utc).isoformat(),
+                    summary,
+                    json.dumps(news_ids),
+                ),
+            )
+            return cur.lastrowid
 
     def claim_update_id(self, update_id: int) -> bool:
         try:

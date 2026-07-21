@@ -1,4 +1,4 @@
-"""SQS-triggered Lambda that runs the Gemini agent for one Telegram update."""
+"""SQS-triggered Lambda that runs the Groq agent for one Telegram update."""
 
 from __future__ import annotations
 

@@ -24,11 +24,11 @@ deploy:
 
 ssm-put:
 	@test -n "$(FINNHUB_API_KEY)" || (echo "FINNHUB_API_KEY missing" && exit 1)
-	@test -n "$(GEMINI_API_KEY)" || (echo "GEMINI_API_KEY missing" && exit 1)
+	@test -n "$(GROQ_API_KEY)" || (echo "GROQ_API_KEY missing" && exit 1)
 	@test -n "$(TELEGRAM_BOT_TOKEN)" || (echo "TELEGRAM_BOT_TOKEN missing" && exit 1)
 	@test -n "$(TELEGRAM_WEBHOOK_SECRET)" || (echo "TELEGRAM_WEBHOOK_SECRET missing" && exit 1)
 	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/finnhub-api-key --value "$(FINNHUB_API_KEY)"
-	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/gemini-api-key --value "$(GEMINI_API_KEY)"
+	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/groq-api-key --value "$(GROQ_API_KEY)"
 	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/telegram-bot-token --value "$(TELEGRAM_BOT_TOKEN)"
 	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/telegram-webhook-secret --value "$(TELEGRAM_WEBHOOK_SECRET)"
 

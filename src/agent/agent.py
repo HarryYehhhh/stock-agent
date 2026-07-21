@@ -1,21 +1,21 @@
-"""Gemini tool-use agent loop."""
+"""Groq tool-use agent loop."""
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import date
 from functools import lru_cache
 
-from google import genai
-from google.genai import types
+from groq import Groq
 
-from agent.config import gemini_api_key
+from agent.config import groq_api_key
 from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
 
 log = logging.getLogger(__name__)
 
-MODEL = "gemini-2.5-flash"
+MODEL = "llama-3.3-70b-versatile"
 MAX_TOOL_LOOPS = 10
 
 SYSTEM_INSTRUCTION = (
@@ -42,33 +42,24 @@ def _sanitize_error(msg: str) -> str:
     return _TOKEN_RE.sub("token=***", msg)
 
 
-def _build_tools() -> list[types.Tool]:
-    """Convert tool schemas to Gemini function declarations."""
-    declarations = []
-    for schema in ALL_TOOL_SCHEMAS:
-        props = {}
-        required = schema["input_schema"].get("required", [])
-        for name, prop in schema["input_schema"]["properties"].items():
-            schema_type = prop.get("type", "string").upper()
-            props[name] = types.Schema(
-                type=schema_type,
-                description=prop.get("description", ""),
-            )
-        declarations.append(types.FunctionDeclaration(
-            name=schema["name"],
-            description=schema["description"],
-            parameters=types.Schema(
-                type="OBJECT",
-                properties=props,
-                required=required,
-            ),
-        ))
-    return [types.Tool(function_declarations=declarations)]
+def _build_tools() -> list[dict]:
+    """Convert tool schemas to OpenAI/Groq function definitions."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": schema["name"],
+                "description": schema["description"],
+                "parameters": schema["input_schema"],
+            },
+        }
+        for schema in ALL_TOOL_SCHEMAS
+    ]
 
 
 @lru_cache(maxsize=1)
-def _client() -> genai.Client:
-    return genai.Client(api_key=gemini_api_key())
+def _client() -> Groq:
+    return Groq(api_key=groq_api_key())
 
 
 def _run_tool(name: str, tool_input: dict) -> dict:
@@ -85,79 +76,76 @@ def _run_tool(name: str, tool_input: dict) -> dict:
         return {"error": _sanitize_error(str(e)), "tool": name}
 
 
-def _build_history_contents(history: list[dict]) -> list[types.Content]:
-    """Build Gemini contents from chat history, ensuring strict user/model alternation."""
-    contents: list[types.Content] = []
+def _build_history_messages(history: list[dict]) -> list[dict]:
+    """Map stored chat history to Groq chat messages (user/assistant roles)."""
+    messages = []
     for msg in history:
-        role = "user" if msg["role"] == "user" else "model"
-        if contents and contents[-1].role == role:
-            contents[-1].parts.append(types.Part.from_text(text=msg["content"]))
-        else:
-            contents.append(types.Content(
-                role=role,
-                parts=[types.Part.from_text(text=msg["content"])],
-            ))
-    return contents
+        role = "user" if msg["role"] == "user" else "assistant"
+        messages.append({"role": role, "content": msg["content"]})
+    return messages
 
 
 def run_agent(user_message: str, history: list[dict]) -> str:
-    """Run the Gemini tool-use loop until completion. Returns the final assistant text."""
-    contents = _build_history_contents(history)
-
-    if contents and contents[-1].role == "user":
-        contents[-1].parts.append(types.Part.from_text(text=user_message))
-    else:
-        contents.append(types.Content(
-            role="user",
-            parts=[types.Part.from_text(text=user_message)],
-        ))
+    """Run the Groq tool-use loop until completion. Returns the final assistant text."""
+    messages: list[dict] = [
+        {
+            "role": "system",
+            "content": f"今天日期是 {date.today().isoformat()}。\n{SYSTEM_INSTRUCTION}",
+        }
+    ]
+    messages.extend(_build_history_messages(history))
+    messages.append({"role": "user", "content": user_message})
 
     tools = _build_tools()
 
     for _ in range(MAX_TOOL_LOOPS):
-        response = _client().models.generate_content(
+        response = _client().chat.completions.create(
             model=MODEL,
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=f"今天日期是 {date.today().isoformat()}。\n{SYSTEM_INSTRUCTION}",
-                tools=tools,
-                temperature=0.7,
-            ),
+            messages=messages,
+            tools=tools,
+            temperature=0.7,
         )
 
-        usage = getattr(response, "usage_metadata", None)
+        usage = getattr(response, "usage", None)
         if usage:
             log.info(
-                "gemini usage: input=%s output=%s",
-                getattr(usage, "prompt_token_count", 0),
-                getattr(usage, "candidates_token_count", 0),
+                "groq usage: input=%s output=%s",
+                getattr(usage, "prompt_tokens", 0),
+                getattr(usage, "completion_tokens", 0),
             )
 
-        candidate = response.candidates[0]
-        parts = candidate.content.parts
+        message = response.choices[0].message
+        tool_calls = message.tool_calls
+        if tool_calls:
+            messages.append({
+                "role": "assistant",
+                "content": message.content or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments,
+                        },
+                    }
+                    for tc in tool_calls
+                ],
+            })
 
-        function_calls = [p for p in parts if p.function_call]
-        if function_calls:
-            contents.append(candidate.content)
-
-            function_responses = []
-            for fc_part in function_calls:
-                fc = fc_part.function_call
-                tool_result = _run_tool(fc.name, dict(fc.args))
-                function_responses.append(
-                    types.Part.from_function_response(
-                        name=fc.name,
-                        response=tool_result,
-                    )
-                )
-
-            contents.append(types.Content(
-                role="user",
-                parts=function_responses,
-            ))
+            for tc in tool_calls:
+                try:
+                    args = json.loads(tc.function.arguments or "{}")
+                except json.JSONDecodeError:
+                    args = {}
+                tool_result = _run_tool(tc.function.name, args)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": json.dumps(tool_result, ensure_ascii=False),
+                })
             continue
 
-        text_parts = [p.text for p in parts if p.text]
-        return "\n".join(text_parts).strip()
+        return (message.content or "").strip()
 
     return "（推理超過最大迴圈次數，請換個問法重試）"
