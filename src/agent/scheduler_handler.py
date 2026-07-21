@@ -2,9 +2,11 @@
 
 Runs once per day at 00:00 UTC (08:00 Asia/Taipei).
 
-Local backend: sync upcoming earnings into sqlite first, then notify from a
-watchlist ⋈ earnings_calendar join so a Finnhub outage degrades to cached data
-instead of a missed push. DynamoDB backend keeps the original live-fetch flow.
+Local backend: sync upcoming earnings into sqlite first, then notify per
+subscriber from an earnings_calendar ⋈ watchlist ⋈ subscribers join, so each
+subscriber only hears about their own watchlist symbols and a Finnhub outage
+degrades to cached data instead of a missed push. DynamoDB backend keeps the
+original live-fetch flow against the global DEFAULT_WATCHLIST.
 """
 
 from __future__ import annotations
@@ -34,17 +36,20 @@ PROMPT_TEMPLATE = (
 
 
 def _sync_earnings_calendar() -> list[str]:
-    """Refresh upcoming watchlist earnings into sqlite; return failed tickers."""
+    """Refresh upcoming earnings for all active subscribers' watchlist symbols.
+
+    Returns the list of symbols whose Finnhub lookup failed.
+    """
     today = date.today()
     date_to = (today + timedelta(days=SYNC_DAYS)).isoformat()
     failed = []
-    for item in get_watchlist():
-        ticker = item["ticker"]
+    for item in get_backend().get_active_watchlist_symbols():
+        symbol = item["symbol"]
         try:
-            get_earnings_calendar(today.isoformat(), date_to, symbol=ticker)
+            get_earnings_calendar(today.isoformat(), date_to, symbol=symbol)
         except Exception:
-            logger.exception("earnings sync failed for %s", ticker)
-            failed.append(ticker)
+            logger.exception("earnings sync failed for %s", symbol)
+            failed.append(symbol)
     return failed
 
 
@@ -72,38 +77,45 @@ def _notify_local(tomorrow: str) -> None:
             logger.info("no watchlist earnings tomorrow, skip push")
         return
 
-    subscribers = get_all_active()
-    symbols = [row["symbol"] for row in earnings]
-    pending = [
-        chat_id
-        for chat_id in subscribers
-        if backend.unnotified_symbols(str(chat_id), symbols, tomorrow)
-    ]
-    if not pending:
-        logger.info("no subscribers pending notification, skip push")
-        return
-
-    summary = run_agent(PROMPT_TEMPLATE.format(tomorrow=tomorrow, earnings=earnings), [])
     banner = _stale_banner(failed, earnings) if failed else ""
-    body = f"{banner}📊 *明日追蹤清單財報提醒（{tomorrow}）*\n\n{summary}"
 
-    for chat_id in pending:
+    by_chat: dict[str, list[dict]] = {}
+    for row in earnings:
+        by_chat.setdefault(row["chat_id"], []).append(row)
+
+    for chat_id, rows in by_chat.items():
+        chat_id = str(chat_id)
+        symbols = [row["symbol"] for row in rows]
+        pending_symbols = backend.unnotified_symbols(chat_id, symbols, tomorrow)
+        if not pending_symbols:
+            continue
+
+        pending_rows = [
+            {k: v for k, v in row.items() if k != "chat_id"}
+            for row in rows
+            if row["symbol"] in pending_symbols
+        ]
+        summary = run_agent(
+            PROMPT_TEMPLATE.format(tomorrow=tomorrow, earnings=pending_rows), []
+        )
+        body = f"{banner}📊 *明日追蹤清單財報提醒（{tomorrow}）*\n\n{summary}"
+
         try:
             send_message(chat_id, body)
         except Exception:
             logger.exception("failed to push to %s", chat_id)
             continue
-        backend.mark_notified(str(chat_id), symbols, tomorrow)
+        backend.mark_notified(chat_id, pending_symbols, tomorrow)
 
 
 def _notify_live(tomorrow: str) -> None:
     earnings = []
     for item in get_watchlist():
-        ticker = item["ticker"]
+        symbol = item["symbol"]
         try:
-            rows = get_earnings_calendar(tomorrow, tomorrow, symbol=ticker)
+            rows = get_earnings_calendar(tomorrow, tomorrow, symbol=symbol)
         except Exception:
-            logger.exception("earnings lookup failed for %s", ticker)
+            logger.exception("earnings lookup failed for %s", symbol)
             continue
         earnings.extend({**row, "exchange": item["exchange"]} for row in rows)
 

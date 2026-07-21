@@ -1,4 +1,4 @@
-"""Scheduler handler tests: fixed watchlist daily earnings push."""
+"""Scheduler handler tests: dynamodb global watchlist push, local per-subscriber push."""
 
 from __future__ import annotations
 
@@ -35,9 +35,9 @@ def mocks(monkeypatch):
         scheduler_handler,
         "get_watchlist",
         lambda: [
-            {"exchange": "NASDAQGS", "ticker": "AAPL"},
-            {"exchange": "NASDAQGS", "ticker": "NVDA"},
-            {"exchange": "NASDAQGM", "ticker": "QQQ"},
+            {"exchange": "NASDAQGS", "symbol": "AAPL"},
+            {"exchange": "NASDAQGS", "symbol": "NVDA"},
+            {"exchange": "NASDAQGM", "symbol": "QQQ"},
         ],
     )
     monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_get_earnings)
@@ -123,17 +123,14 @@ def test_symbol_lookup_failure_does_not_stop_other_watchlist_symbols(mocks):
 @pytest.fixture
 def local_mocks(local_store, monkeypatch):
     from agent.db.backend import get_backend
+    from agent.db.subscribers import subscribe
 
-    fake_get_subs = MagicMock(return_value=["111"])
     fake_run_agent = MagicMock(return_value="summary text")
     fake_send = MagicMock()
 
-    monkeypatch.setattr(
-        scheduler_handler,
-        "get_watchlist",
-        lambda: [{"exchange": "NASDAQGS", "ticker": "AAPL"}],
-    )
-    monkeypatch.setattr(scheduler_handler, "get_all_active", fake_get_subs)
+    subscribe("111")
+    get_backend().add_to_watchlist("111", "AAPL", exchange="NASDAQGS")
+
     monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
     monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
 
@@ -152,7 +149,6 @@ def local_mocks(local_store, monkeypatch):
         return items
 
     return {
-        "subs": fake_get_subs,
         "agent": fake_run_agent,
         "send": fake_send,
         "sync_ok": sync_ok,
@@ -170,6 +166,7 @@ def test_local_pushes_from_sqlite_join_and_is_idempotent(local_mocks, monkeypatc
     prompt = local_mocks["agent"].call_args.args[0]
     assert "AAPL" in prompt
     assert "NASDAQGS" in prompt
+    assert local_mocks["send"].call_args.args[0] == "111"
     body = local_mocks["send"].call_args.args[1]
     assert "⚠️" not in body
     assert local_mocks["send"].call_count == 1
@@ -247,3 +244,70 @@ def test_local_send_failure_allows_retry_on_next_run(local_mocks, monkeypatch):
     local_mocks["send"].side_effect = None
     scheduler_handler.handler({}, CTX)
     assert local_mocks["send"].call_count == 2
+
+
+def test_local_per_subscriber_push_only_own_symbols_and_is_idempotent(
+    local_store, monkeypatch
+):
+    from agent.db.backend import get_backend
+    from agent.db.subscribers import subscribe
+
+    subscribe("111")
+    subscribe("222")
+    get_backend().add_to_watchlist("111", "AAPL", exchange="NASDAQGS")
+    get_backend().add_to_watchlist("222", "NVDA", exchange="NASDAQGS")
+
+    fake_run_agent = MagicMock(return_value="summary text")
+    fake_send = MagicMock()
+    monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
+    monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
+
+    def sync_ok(_date_from, _date_to, symbol):
+        items = [{"symbol": symbol, "date": TOMORROW, "hour": "amc"}]
+        get_backend().upsert_earnings_calendar(items)
+        return items
+
+    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", sync_ok)
+
+    scheduler_handler.handler({}, CTX)
+
+    assert fake_send.call_count == 2
+    sent_chat_ids = {call.args[0] for call in fake_send.call_args_list}
+    assert sent_chat_ids == {"111", "222"}
+
+    prompts = [call.args[0] for call in fake_run_agent.call_args_list]
+    assert any("AAPL" in p and "NVDA" not in p for p in prompts)
+    assert any("NVDA" in p and "AAPL" not in p for p in prompts)
+
+    # Rerun: both subscribers already notified for their own symbols, no dupe push.
+    fake_send.reset_mock()
+    fake_run_agent.reset_mock()
+    scheduler_handler.handler({}, CTX)
+    fake_send.assert_not_called()
+    fake_run_agent.assert_not_called()
+
+
+def test_local_inactive_subscriber_is_excluded_from_push(local_store, monkeypatch):
+    from agent.db.backend import get_backend
+    from agent.db.subscribers import subscribe, unsubscribe
+
+    subscribe("111")
+    unsubscribe("111")
+    get_backend().add_to_watchlist("111", "AAPL", exchange="NASDAQGS")
+
+    fake_run_agent = MagicMock(return_value="summary text")
+    fake_send = MagicMock()
+    monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
+    monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
+
+    def sync_ok(_date_from, _date_to, symbol):
+        items = [{"symbol": symbol, "date": TOMORROW, "hour": "amc"}]
+        get_backend().upsert_earnings_calendar(items)
+        return items
+
+    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", sync_ok)
+
+    scheduler_handler.handler({}, CTX)
+
+    fake_run_agent.assert_not_called()
+    fake_send.assert_not_called()
