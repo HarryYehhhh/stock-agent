@@ -65,10 +65,64 @@ def test_processor_subscribe_and_scheduler_share_local_store(local_store, monkey
     monkeypatch.setattr(scheduler_handler, "run_agent", lambda *_: "summary")
 
     processor_handler._process_update({"message": {"chat": {"id": 777}, "text": "/subscribe"}})
+    assert scheduler_handler.sync_earnings() == []
     assert scheduler_handler.handler({}, CTX) == {"statusCode": 200}
 
     assert fake_send.call_args_list[-1].args[0] == "777"
     assert "summary" in fake_send.call_args_list[-1].args[1]
+
+
+def test_rest_watchlist_returns_user_watchlist(local_store):
+    get_backend().add_to_watchlist("111", "AAPL", exchange="NASDAQGS")
+    get_backend().add_to_watchlist("111", "NVDA", exchange="NASDAQGS")
+    get_backend().add_to_watchlist("222", "TSM", exchange="NYSE")
+
+    response = TestClient(app).get("/watchlist/111")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "chat_id": "111",
+        "count": 2,
+        "watchlist": [
+            {"symbol": "AAPL", "exchange": "NASDAQGS"},
+            {"symbol": "NVDA", "exchange": "NASDAQGS"},
+        ],
+    }
+
+
+def test_rest_watchlist_earnings_scoped_to_chat_and_window(local_store):
+    backend = get_backend()
+    backend.add_to_watchlist("111", "AAPL", exchange="NASDAQGS")
+    backend.add_to_watchlist("222", "NVDA", exchange="NASDAQGS")
+
+    in_window = (date.today() + timedelta(days=3)).isoformat()
+    out_of_window = (date.today() + timedelta(days=60)).isoformat()
+    backend.upsert_earnings_calendar(
+        [
+            {"symbol": "AAPL", "date": in_window, "hour": "amc", "epsEstimate": 2.35},
+            {"symbol": "AAPL", "date": out_of_window, "hour": "bmo"},
+            {"symbol": "NVDA", "date": in_window, "hour": "amc"},  # not on 111's list
+        ]
+    )
+
+    response = TestClient(app).get("/watchlist/111/earnings", params={"days": 14})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["chat_id"] == "111"
+    assert body["count"] == 1
+    row = body["earnings"][0]
+    assert row["symbol"] == "AAPL"
+    assert row["earning_date"] == in_window
+    assert row["extended_hour"] == "amc"
+    assert row["eps_estimate"] == 2.35
+
+
+def test_rest_watchlist_earnings_empty_for_unknown_chat(local_store):
+    response = TestClient(app).get("/watchlist/999/earnings")
+
+    assert response.status_code == 200
+    assert response.json()["count"] == 0
 
 
 class FinnhubStubHandler(BaseHTTPRequestHandler):

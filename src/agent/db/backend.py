@@ -166,6 +166,17 @@ class LocalSQLiteBackend:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS company_summaries (
+                    symbol TEXT NOT NULL,
+                    earning_date TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (symbol, earning_date)
+                )
+                """
+            )
 
     def _migrate_watchlist_schema(self, conn: sqlite3.Connection) -> None:
         """One-time migration from the old global watchlist to per-subscriber rows.
@@ -422,6 +433,25 @@ class LocalSQLiteBackend:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def get_chat_watchlist_earnings(
+        self, chat_id: str, date_from: str, date_to: str
+    ) -> list[dict[str, Any]]:
+        """Cached earnings in [date_from, date_to] for chat_id's watchlist symbols."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT w.symbol AS symbol, w.exchange AS exchange,
+                       e.earning_date, e.extended_hour, e.eps_estimate,
+                       e.revenue_estimate, e.updated_at
+                FROM watchlist w
+                JOIN earnings_calendar e ON e.symbol = w.symbol
+                WHERE w.chat_id = ? AND e.earning_date BETWEEN ? AND ?
+                ORDER BY e.earning_date, w.position
+                """,
+                (chat_id, date_from, date_to),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def unnotified_symbols(
         self, chat_id: str, symbols: list[str], earning_date: str
     ) -> list[str]:
@@ -452,6 +482,32 @@ class LocalSQLiteBackend:
                 VALUES (?, ?, ?, ?)
                 """,
                 [(chat_id, symbol, earning_date, sent_at) for symbol in symbols],
+            )
+
+    def get_company_summary(self, symbol: str, earning_date: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT summary FROM company_summaries
+                WHERE symbol = ? AND earning_date = ?
+                """,
+                (symbol, earning_date),
+            ).fetchone()
+        return row["summary"] if row else None
+
+    def upsert_company_summary(
+        self, symbol: str, earning_date: str, summary: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO company_summaries (symbol, earning_date, summary, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(symbol, earning_date) DO UPDATE SET
+                    summary = excluded.summary,
+                    created_at = excluded.created_at
+                """,
+                (symbol, earning_date, summary, datetime.now(timezone.utc).isoformat()),
             )
 
     def insert_news(self, items: list[dict[str, Any]]) -> int:
