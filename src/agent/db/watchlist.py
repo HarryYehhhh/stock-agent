@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from agent.db.backend import get_backend, selected_backend_name
+from agent.db.backend import get_backend
 
 DEFAULT_WATCHLIST = [
     {"exchange": "NASDAQGM", "symbol": "AAOI"},
@@ -38,9 +38,7 @@ DEFAULT_WATCHLIST = [
 
 def get_watchlist(chat_id: str | None = None) -> list[dict[str, str]]:
     """Local backend: chat_id's own watchlist. DynamoDB: global DEFAULT_WATCHLIST."""
-    if selected_backend_name() == "local":
-        return get_backend().get_watchlist(chat_id)
-    return [item.copy() for item in DEFAULT_WATCHLIST]
+    return get_backend().get_watchlist(chat_id)
 
 
 def add_to_watchlist(chat_id: str, symbol: str) -> bool:
@@ -48,9 +46,7 @@ def add_to_watchlist(chat_id: str, symbol: str) -> bool:
 
     Raises NotImplementedError on the dynamodb backend (local-only feature).
     """
-    if selected_backend_name() == "local":
-        return get_backend().add_to_watchlist(chat_id, symbol)
-    raise NotImplementedError("watchlist management is only supported on the local backend")
+    return get_backend().add_to_watchlist(chat_id, symbol)
 
 
 def remove_from_watchlist(chat_id: str, symbol: str) -> bool:
@@ -58,9 +54,7 @@ def remove_from_watchlist(chat_id: str, symbol: str) -> bool:
 
     Raises NotImplementedError on the dynamodb backend (local-only feature).
     """
-    if selected_backend_name() == "local":
-        return get_backend().remove_from_watchlist(chat_id, symbol)
-    raise NotImplementedError("watchlist management is only supported on the local backend")
+    return get_backend().remove_from_watchlist(chat_id, symbol)
 
 
 def seed_watchlist_if_empty(chat_id: str) -> None:
@@ -68,5 +62,4 @@ def seed_watchlist_if_empty(chat_id: str) -> None:
 
     No-op on the dynamodb backend, which already returns DEFAULT_WATCHLIST globally.
     """
-    if selected_backend_name() == "local":
-        get_backend().seed_watchlist_if_empty(chat_id)
+    get_backend().seed_watchlist_if_empty(chat_id)

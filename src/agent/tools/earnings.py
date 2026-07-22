@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from agent.config import finnhub_api_key
-from agent.db.backend import get_backend, selected_backend_name
+from agent.db.backend import get_backend
 from agent.tools._http import client
 
 EARNINGS_TOOL = {
@@ -39,8 +39,7 @@ def get_earnings_calendar(
     if symbol:
         items = [it for it in items if (it.get("symbol") or "").upper() == symbol.upper()]
     items = items[:100]
-    if selected_backend_name() == "local":
-        get_backend().upsert_earnings_calendar(items)
+    get_backend().upsert_earnings_calendar(items)
     return items
 
 

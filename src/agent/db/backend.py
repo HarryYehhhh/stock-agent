@@ -1,4 +1,4 @@
-"""Storage backend selection and local sqlite implementation."""
+"""Storage backend selection, local sqlite implementation, and DynamoDB implementation."""
 
 from __future__ import annotations
 
@@ -9,7 +9,18 @@ import time
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+
+import boto3
+from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
+
+from agent.config import (
+    aws_region,
+    conversations_table,
+    processed_updates_table,
+    subscribers_table,
+)
 
 CONVERSATION_TTL_SECONDS = 30 * 24 * 3600
 DEDUP_TTL_SECONDS = 3600
@@ -30,11 +41,44 @@ def local_store_path() -> Path:
     return Path(os.getenv("LOCAL_STORE_PATH", DEFAULT_LOCAL_STORE_PATH))
 
 
+class StorageBackend(Protocol):
+    """Cross-backend storage interface (conversations / subscribers / dedup / watchlist / earnings upsert).
+
+    Local-only methods (earnings cache join, news, market summaries, company
+    summaries, notifications, export) are intentionally excluded — those code
+    paths only run on `LocalSQLiteBackend`. See ADR-0003.
+    """
+
+    def save_message(self, chat_id: str, role: str, content: str) -> None: ...
+
+    def get_history(self, chat_id: str, limit: int) -> list[dict]: ...
+
+    def subscribe(self, chat_id: str) -> None: ...
+
+    def unsubscribe(self, chat_id: str) -> None: ...
+
+    def get_all_active(self) -> list[str]: ...
+
+    def claim_update_id(self, update_id: int) -> bool: ...
+
+    def get_watchlist(self, chat_id: str | None = None) -> list[dict]: ...
+
+    def add_to_watchlist(
+        self, chat_id: str, symbol: str, exchange: str | None = None
+    ) -> bool: ...
+
+    def remove_from_watchlist(self, chat_id: str, symbol: str) -> bool: ...
+
+    def seed_watchlist_if_empty(self, chat_id: str) -> None: ...
+
+    def upsert_earnings_calendar(self, items: list[dict]) -> None: ...
+
+
 @lru_cache(maxsize=1)
-def get_backend() -> "LocalSQLiteBackend":
-    if selected_backend_name() != "local":
-        raise ValueError("get_backend() is only available for local storage")
-    return LocalSQLiteBackend(local_store_path())
+def get_backend() -> StorageBackend:
+    if selected_backend_name() == "local":
+        return LocalSQLiteBackend(local_store_path())
+    return DynamoDBBackend()
 
 
 class LocalSQLiteBackend:
@@ -609,3 +653,104 @@ class LocalSQLiteBackend:
             "subscribers": subscribers,
             "dedup": dedup,
         }
+
+
+class DynamoDBBackend:
+    """DynamoDB-backed StorageBackend implementation for Lambda deployments.
+
+    Table resources are created once in __init__ and reused; singleton
+    semantics are provided by get_backend()'s @lru_cache, not by this class.
+    """
+
+    def __init__(self) -> None:
+        resource = boto3.resource("dynamodb", region_name=aws_region())
+        self._conversations = resource.Table(conversations_table())
+        self._subscribers = resource.Table(subscribers_table())
+        self._processed_updates = resource.Table(processed_updates_table())
+
+    def save_message(self, chat_id: str, role: str, content: str) -> None:
+        self._conversations.put_item(
+            Item={
+                "chat_id": chat_id,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "role": role,
+                "content": content,
+                "ttl": int(time.time()) + CONVERSATION_TTL_SECONDS,
+            }
+        )
+
+    def get_history(self, chat_id: str, limit: int) -> list[dict[str, Any]]:
+        resp = self._conversations.query(
+            KeyConditionExpression=Key("chat_id").eq(chat_id),
+            ScanIndexForward=False,
+            Limit=limit,
+        )
+        items = resp.get("Items", [])
+        items.reverse()
+        return items
+
+    def subscribe(self, chat_id: str) -> None:
+        self._subscribers.put_item(
+            Item={
+                "chat_id": chat_id,
+                "subscribed_at": datetime.now(timezone.utc).isoformat(),
+                "active": True,
+            }
+        )
+
+    def unsubscribe(self, chat_id: str) -> None:
+        self._subscribers.update_item(
+            Key={"chat_id": chat_id},
+            UpdateExpression="SET active = :a",
+            ExpressionAttributeValues={":a": False},
+        )
+
+    def get_all_active(self) -> list[str]:
+        """Scan all subscribers with active=True. Acceptable for small subscriber counts."""
+        chat_ids: list[str] = []
+        resp = self._subscribers.scan(
+            FilterExpression="active = :a",
+            ExpressionAttributeValues={":a": True},
+        )
+        chat_ids.extend(item["chat_id"] for item in resp.get("Items", []))
+        while "LastEvaluatedKey" in resp:
+            resp = self._subscribers.scan(
+                FilterExpression="active = :a",
+                ExpressionAttributeValues={":a": True},
+                ExclusiveStartKey=resp["LastEvaluatedKey"],
+            )
+            chat_ids.extend(item["chat_id"] for item in resp.get("Items", []))
+        return chat_ids
+
+    def claim_update_id(self, update_id: int) -> bool:
+        """Atomically claim an update_id. Returns True if first time, False if duplicate."""
+        try:
+            self._processed_updates.put_item(
+                Item={"update_id": update_id, "ttl": int(time.time()) + DEDUP_TTL_SECONDS},
+                ConditionExpression="attribute_not_exists(update_id)",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
+
+    def get_watchlist(self, chat_id: str | None = None) -> list[dict[str, Any]]:
+        """DynamoDB backend has no per-subscriber watchlist; returns the global default."""
+        from agent.db.watchlist import DEFAULT_WATCHLIST
+
+        return [item.copy() for item in DEFAULT_WATCHLIST]
+
+    def add_to_watchlist(
+        self, chat_id: str, symbol: str, exchange: str | None = None
+    ) -> bool:
+        raise NotImplementedError("watchlist management is only supported on the local backend")
+
+    def remove_from_watchlist(self, chat_id: str, symbol: str) -> bool:
+        raise NotImplementedError("watchlist management is only supported on the local backend")
+
+    def seed_watchlist_if_empty(self, chat_id: str) -> None:
+        """No-op: the dynamodb backend already returns DEFAULT_WATCHLIST globally."""
+
+    def upsert_earnings_calendar(self, items: list[dict[str, Any]]) -> None:
+        """No-op: the dynamodb backend does not cache the earnings calendar."""

@@ -11,6 +11,8 @@ import boto3
 import pytest
 from moto import mock_aws
 
+from agent.db import backend
+
 REGION = "ap-northeast-1"
 
 CONVERSATIONS = "test-conversations"
@@ -35,17 +37,14 @@ def env(monkeypatch):
     monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
     monkeypatch.delenv("STORAGE_BACKEND", raising=False)
     monkeypatch.delenv("LOCAL_STORE_PATH", raising=False)
+    backend.get_backend.cache_clear()
 
 
 def clear_db_caches() -> None:
     from agent import config as cfg, webhook_handler
-    from agent.db import backend, conversations, dedup, subscribers
 
     cfg._load_secrets.cache_clear()
     backend.get_backend.cache_clear()
-    dedup._table.cache_clear()
-    conversations._table.cache_clear()
-    subscribers._table.cache_clear()
     webhook_handler._sqs.cache_clear()
 
 
