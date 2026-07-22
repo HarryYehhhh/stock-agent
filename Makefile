@@ -1,4 +1,4 @@
-.PHONY: install test lint dev notify-earnings build deploy set-webhook logs-webhook logs-processor logs-scheduler ssm-put
+.PHONY: install test lint dev notify-earnings sync-earnings build deploy set-webhook logs-webhook logs-processor logs-scheduler ssm-put
 
 REGION ?= ap-northeast-1
 STACK ?= earnings-agent
@@ -15,6 +15,9 @@ dev:
 
 notify-earnings:
 	PYTHONPATH=src uv run python -m agent.scheduler_handler
+
+sync-earnings:
+	PYTHONPATH=src uv run python -m agent.scheduler_handler sync
 
 build:
 	cd infra && sam build

@@ -71,6 +71,14 @@ See `.env.example`. Required keys: `GROQ_API_KEY`, `FINNHUB_API_KEY`, `TELEGRAM_
 - Surgical changes only: don't "improve" adjacent code. Every changed line should trace to the user's request. Remove only orphans YOUR changes created.
 - Define verifiable success criteria before starting. For bug fixes, write a reproducing test first.
 
+### Harness Workflow
+
+開發任務預設走 harness skills（docs/ 骨架已由 `harness-init` 建立）：
+
+- **`feature` skill** — 方向已討論清楚的小功能、修 bug、補測試。流程：generator（實作 + 測試）→ evaluator（驗收 + QA report 寫入 `docs/qa-reports/`、追加 `docs/CHANGELOG.md`）。不自動 commit/PR。
+- **`sprint` skill** — 新功能或需要 spec/contract 的大改動。流程：planner（`docs/specs/` + `docs/contracts/`，必要時 ADR）→ generator → evaluator → 自動 commit、push、開 PR。
+- 只有純問答、trivial 一行修改、或使用者明確要求直接改時才跳過 harness。
+
 ## Project Status
 
 ### Done

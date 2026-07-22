@@ -1,7 +1,8 @@
-"""Scheduler handler tests: fixed watchlist daily earnings push."""
+"""Scheduler handler tests: dynamodb global watchlist push, local per-subscriber push."""
 
 from __future__ import annotations
 
+import sqlite3
 from datetime import date, timedelta
 from unittest.mock import MagicMock
 
@@ -35,9 +36,9 @@ def mocks(monkeypatch):
         scheduler_handler,
         "get_watchlist",
         lambda: [
-            {"exchange": "NASDAQGS", "ticker": "AAPL"},
-            {"exchange": "NASDAQGS", "ticker": "NVDA"},
-            {"exchange": "NASDAQGM", "ticker": "QQQ"},
+            {"exchange": "NASDAQGS", "symbol": "AAPL"},
+            {"exchange": "NASDAQGS", "symbol": "NVDA"},
+            {"exchange": "NASDAQGM", "symbol": "QQQ"},
         ],
     )
     monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_get_earnings)
@@ -120,26 +121,16 @@ def test_symbol_lookup_failure_does_not_stop_other_watchlist_symbols(mocks):
     assert "AAPL" not in prompt
 
 
-@pytest.fixture
-def local_mocks(local_store, monkeypatch):
+# ---------------------------------------------------------------------------
+# Local backend: sync cron + cached per-company summaries
+# ---------------------------------------------------------------------------
+
+
+def _seed_earnings(symbols: list[str]) -> None:
     from agent.db.backend import get_backend
 
-    fake_get_subs = MagicMock(return_value=["111"])
-    fake_run_agent = MagicMock(return_value="summary text")
-    fake_send = MagicMock()
-
-    monkeypatch.setattr(
-        scheduler_handler,
-        "get_watchlist",
-        lambda: [{"exchange": "NASDAQGS", "ticker": "AAPL"}],
-    )
-    monkeypatch.setattr(scheduler_handler, "get_all_active", fake_get_subs)
-    monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
-    monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
-
-    def sync_ok(_date_from, _date_to, symbol):
-        # Mimics the real tool: persists fetched rows into the local store.
-        items = [
+    get_backend().upsert_earnings_calendar(
+        [
             {
                 "symbol": symbol,
                 "date": TOMORROW,
@@ -147,103 +138,174 @@ def local_mocks(local_store, monkeypatch):
                 "epsEstimate": 1.4,
                 "revenueEstimate": 82000000000,
             }
+            for symbol in symbols
         ]
-        get_backend().upsert_earnings_calendar(items)
-        return items
-
-    return {
-        "subs": fake_get_subs,
-        "agent": fake_run_agent,
-        "send": fake_send,
-        "sync_ok": sync_ok,
-        "backend": get_backend,
-    }
-
-
-def test_local_pushes_from_sqlite_join_and_is_idempotent(local_mocks, monkeypatch):
-    monkeypatch.setattr(
-        scheduler_handler, "get_earnings_calendar", local_mocks["sync_ok"]
     )
+
+
+@pytest.fixture
+def local_mocks(local_store, monkeypatch):
+    from agent.db.subscribers import subscribe
+    from agent.db.watchlist import add_to_watchlist
+
+    fake_run_agent = MagicMock(return_value="*AAPL* 財報摘要")
+    fake_send = MagicMock()
+
+    subscribe("111")
+    add_to_watchlist("111", "AAPL")
+
+    monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
+    monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
+
+    return {"agent": fake_run_agent, "send": fake_send}
+
+
+def test_sync_earnings_fetches_active_watchlist_symbols(local_mocks, monkeypatch):
+    from agent.db.subscribers import subscribe
+    from agent.db.watchlist import add_to_watchlist
+
+    subscribe("222")
+    add_to_watchlist("222", "NVDA")
+    add_to_watchlist("222", "AAPL")  # shared with 111 → fetched once
+
+    fake_fetch = MagicMock(return_value=[])
+    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_fetch)
+
+    failed = scheduler_handler.sync_earnings()
+
+    assert failed == []
+    fetched = sorted(call.kwargs["symbol"] for call in fake_fetch.call_args_list)
+    assert fetched == ["AAPL", "NVDA"]
+
+
+def test_sync_earnings_collects_failures(local_mocks, monkeypatch):
+    def flaky(_date_from, _date_to, symbol):
+        raise RuntimeError("finnhub down")
+
+    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", flaky)
+
+    assert scheduler_handler.sync_earnings() == ["AAPL"]
+
+
+def test_local_notify_reads_sqlite_only_and_is_idempotent(local_mocks):
+    _seed_earnings(["AAPL"])
 
     scheduler_handler.handler({}, CTX)
 
     prompt = local_mocks["agent"].call_args.args[0]
     assert "AAPL" in prompt
-    assert "NASDAQGS" in prompt
+    assert local_mocks["send"].call_args.args[0] == "111"
     body = local_mocks["send"].call_args.args[1]
     assert "⚠️" not in body
+    assert "*AAPL* 財報摘要" in body
     assert local_mocks["send"].call_count == 1
 
-    # Rerun: everything already notified, no duplicate push.
+    # Rerun: already notified, no duplicate push and no extra Groq call.
     scheduler_handler.handler({}, CTX)
     assert local_mocks["send"].call_count == 1
     assert local_mocks["agent"].call_count == 1
 
 
-def test_local_warns_and_uses_cache_when_finnhub_fails(local_mocks, monkeypatch):
-    backend = local_mocks["backend"]()
-    backend.upsert_earnings_calendar(
-        [{"symbol": "AAPL", "date": TOMORROW, "hour": "bmo", "epsEstimate": 1.5}]
-    )
+def test_local_company_summary_cached_across_subscribers(local_mocks, local_store):
+    from agent.db.subscribers import subscribe
+    from agent.db.watchlist import add_to_watchlist
 
-    def sync_fail(_date_from, _date_to, symbol):
-        raise RuntimeError("finnhub down")
-
-    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", sync_fail)
+    subscribe("222")
+    add_to_watchlist("222", "AAPL")
+    _seed_earnings(["AAPL"])
 
     scheduler_handler.handler({}, CTX)
 
-    assert local_mocks["send"].call_count == 1
+    # Two subscribers pushed, but the AAPL summary was generated only once.
+    assert local_mocks["send"].call_count == 2
+    assert local_mocks["agent"].call_count == 1
+
+    with sqlite3.connect(local_store) as conn:
+        rows = conn.execute(
+            "SELECT symbol, earning_date, summary FROM company_summaries"
+        ).fetchall()
+    assert rows == [("AAPL", TOMORROW, "*AAPL* 財報摘要")]
+
+
+def test_local_warns_when_cache_is_stale(local_mocks, local_store):
+    _seed_earnings(["AAPL"])
+    with sqlite3.connect(local_store) as conn:
+        conn.execute(
+            "UPDATE earnings_calendar SET updated_at = '2020-01-01T00:00:00+00:00'"
+        )
+
+    scheduler_handler.handler({}, CTX)
+
     body = local_mocks["send"].call_args.args[1]
     assert "⚠️" in body
     assert "最後同步" in body
-    assert "1 檔查詢失敗" in body
+    assert "2020-01-01" in body
 
 
-def test_local_skips_when_sync_fails_and_cache_is_empty(local_mocks, monkeypatch):
-    def sync_fail(_date_from, _date_to, symbol):
-        raise RuntimeError("finnhub down")
-
-    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", sync_fail)
-
+def test_local_skips_when_no_cached_earnings(local_mocks):
     scheduler_handler.handler({}, CTX)
 
     local_mocks["agent"].assert_not_called()
     local_mocks["send"].assert_not_called()
 
 
-def test_local_join_ignores_non_watchlist_symbols(local_mocks, monkeypatch):
-    from agent.db.backend import get_backend
-
-    def sync_with_extra(_date_from, _date_to, symbol):
-        items = [
-            {"symbol": symbol, "date": TOMORROW, "hour": "amc"},
-            {"symbol": "ZZZZ", "date": TOMORROW, "hour": "amc"},
-        ]
-        get_backend().upsert_earnings_calendar(items)
-        return items
-
-    monkeypatch.setattr(
-        scheduler_handler, "get_earnings_calendar", sync_with_extra
-    )
+def test_local_summary_failure_falls_back_and_retries_next_run(local_mocks, local_store):
+    _seed_earnings(["AAPL"])
+    local_mocks["agent"].side_effect = RuntimeError("groq down")
 
     scheduler_handler.handler({}, CTX)
 
-    prompt = local_mocks["agent"].call_args.args[0]
-    assert "AAPL" in prompt
-    assert "ZZZZ" not in prompt
+    body = local_mocks["send"].call_args.args[1]
+    assert "摘要生成失敗" in body
+    assert "AAPL" in body
+    # Fallback text is not cached, so a later run regenerates the summary.
+    with sqlite3.connect(local_store) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM company_summaries").fetchone()[0] == 0
 
 
-def test_local_send_failure_allows_retry_on_next_run(local_mocks, monkeypatch):
-    monkeypatch.setattr(
-        scheduler_handler, "get_earnings_calendar", local_mocks["sync_ok"]
-    )
+def test_local_send_failure_allows_retry_and_reuses_cached_summary(local_mocks):
+    _seed_earnings(["AAPL"])
     local_mocks["send"].side_effect = RuntimeError("telegram down")
 
     scheduler_handler.handler({}, CTX)
     assert local_mocks["send"].call_count == 1
 
-    # Next run retries the failed chat because nothing was marked notified.
+    # Next run retries the failed chat from the cached summary (no new Groq call).
     local_mocks["send"].side_effect = None
     scheduler_handler.handler({}, CTX)
     assert local_mocks["send"].call_count == 2
+    assert local_mocks["agent"].call_count == 1
+
+
+def test_local_per_subscriber_push_only_own_symbols(local_mocks):
+    from agent.db.subscribers import subscribe
+    from agent.db.watchlist import add_to_watchlist
+
+    subscribe("222")
+    add_to_watchlist("222", "NVDA")
+    _seed_earnings(["AAPL", "NVDA", "ZZZZ"])
+
+    def summary_for(prompt, _history):
+        return "*NVDA* 摘要" if "NVDA" in prompt else "*AAPL* 摘要"
+
+    local_mocks["agent"].side_effect = summary_for
+
+    scheduler_handler.handler({}, CTX)
+
+    assert local_mocks["send"].call_count == 2
+    bodies = {call.args[0]: call.args[1] for call in local_mocks["send"].call_args_list}
+    assert "*AAPL* 摘要" in bodies["111"] and "NVDA" not in bodies["111"]
+    assert "*NVDA* 摘要" in bodies["222"] and "AAPL" not in bodies["222"]
+    assert all("ZZZZ" not in body for body in bodies.values())
+
+
+def test_local_inactive_subscriber_is_excluded_from_push(local_mocks):
+    from agent.db.subscribers import unsubscribe
+
+    unsubscribe("111")
+    _seed_earnings(["AAPL"])
+
+    scheduler_handler.handler({}, CTX)
+
+    local_mocks["agent"].assert_not_called()
+    local_mocks["send"].assert_not_called()

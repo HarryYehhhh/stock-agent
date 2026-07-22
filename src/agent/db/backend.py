@@ -79,13 +79,22 @@ class LocalSQLiteBackend:
                 )
                 """
             )
+            self._migrate_watchlist_schema(conn)
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS watchlist (
-                    ticker TEXT PRIMARY KEY,
-                    exchange TEXT NOT NULL,
-                    position INTEGER NOT NULL
+                    chat_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    exchange TEXT,
+                    position INTEGER NOT NULL,
+                    PRIMARY KEY (chat_id, symbol)
                 )
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_watchlist_symbol
+                ON watchlist (symbol)
                 """
             )
             conn.execute(
@@ -157,32 +166,68 @@ class LocalSQLiteBackend:
                 )
                 """
             )
-            self._seed_watchlist(conn)
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS company_summaries (
+                    symbol TEXT NOT NULL,
+                    earning_date TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (symbol, earning_date)
+                )
+                """
+            )
 
-    def _seed_watchlist(self, conn: sqlite3.Connection) -> None:
-        from agent.db.watchlist import DEFAULT_WATCHLIST
+    def _migrate_watchlist_schema(self, conn: sqlite3.Connection) -> None:
+        """One-time migration from the old global watchlist to per-subscriber rows.
 
-        rows = [
-            (item["ticker"], item["exchange"], position)
-            for position, item in enumerate(DEFAULT_WATCHLIST)
+        Old shape: watchlist(ticker PRIMARY KEY, exchange, position) — a single
+        global list. New shape: watchlist(chat_id, symbol, exchange, position),
+        PRIMARY KEY (chat_id, symbol). Detected by absence of a chat_id column;
+        idempotent because the new shape short-circuits this method.
+        """
+        table_exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'watchlist'"
+        ).fetchone()
+        if not table_exists:
+            return
+
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(watchlist)")}
+        if "chat_id" in columns:
+            return
+
+        old_rows = conn.execute(
+            "SELECT ticker, exchange, position FROM watchlist"
+        ).fetchall()
+        subscriber_ids = [
+            row["chat_id"] for row in conn.execute("SELECT chat_id FROM subscribers")
         ]
-        conn.executemany(
-            """
-            INSERT INTO watchlist (ticker, exchange, position)
-            VALUES (?, ?, ?)
-            ON CONFLICT(ticker) DO UPDATE SET
-                exchange = excluded.exchange,
-                position = excluded.position
-            """,
-            rows,
-        )
+
+        conn.execute("DROP TABLE watchlist")
         conn.execute(
-            f"""
-            DELETE FROM watchlist
-            WHERE ticker NOT IN ({",".join("?" for _ in rows)})
-            """,
-            [ticker for ticker, _, _ in rows],
+            """
+            CREATE TABLE watchlist (
+                chat_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                exchange TEXT,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, symbol)
+            )
+            """
         )
+
+        if subscriber_ids and old_rows:
+            conn.executemany(
+                """
+                INSERT INTO watchlist (chat_id, symbol, exchange, position)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (chat_id, row["ticker"], row["exchange"], row["position"])
+                    for chat_id in subscriber_ids
+                    for row in old_rows
+                ],
+            )
 
     def save_message(self, chat_id: str, role: str, content: str) -> None:
         with self._connect() as conn:
@@ -249,16 +294,88 @@ class LocalSQLiteBackend:
             ).fetchall()
         return [row["chat_id"] for row in rows]
 
-    def get_watchlist(self) -> list[dict[str, str]]:
+    def get_watchlist(self, chat_id: str) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT exchange, ticker
+                SELECT symbol, exchange
                 FROM watchlist
+                WHERE chat_id = ?
                 ORDER BY position
+                """,
+                (chat_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def add_to_watchlist(
+        self, chat_id: str, symbol: str, exchange: str | None = None
+    ) -> bool:
+        """Add symbol (uppercased) to chat_id's watchlist. No-op if already present."""
+        symbol = symbol.upper()
+        with self._connect() as conn:
+            existing = conn.execute(
+                "SELECT 1 FROM watchlist WHERE chat_id = ? AND symbol = ?",
+                (chat_id, symbol),
+            ).fetchone()
+            if existing:
+                return False
+            max_position = conn.execute(
+                "SELECT MAX(position) AS max_position FROM watchlist WHERE chat_id = ?",
+                (chat_id,),
+            ).fetchone()["max_position"]
+            next_position = 0 if max_position is None else max_position + 1
+            conn.execute(
+                """
+                INSERT INTO watchlist (chat_id, symbol, exchange, position)
+                VALUES (?, ?, ?, ?)
+                """,
+                (chat_id, symbol, exchange, next_position),
+            )
+        return True
+
+    def remove_from_watchlist(self, chat_id: str, symbol: str) -> bool:
+        symbol = symbol.upper()
+        with self._connect() as conn:
+            cur = conn.execute(
+                "DELETE FROM watchlist WHERE chat_id = ? AND symbol = ?",
+                (chat_id, symbol),
+            )
+        return cur.rowcount > 0
+
+    def seed_watchlist_if_empty(self, chat_id: str) -> None:
+        """Seed chat_id's watchlist with DEFAULT_WATCHLIST only if it has no rows yet."""
+        from agent.db.watchlist import DEFAULT_WATCHLIST
+
+        with self._connect() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) AS count FROM watchlist WHERE chat_id = ?", (chat_id,)
+            ).fetchone()["count"]
+            if count > 0:
+                return
+            conn.executemany(
+                """
+                INSERT INTO watchlist (chat_id, symbol, exchange, position)
+                VALUES (?, ?, ?, ?)
+                """,
+                [
+                    (chat_id, item["symbol"], item["exchange"], position)
+                    for position, item in enumerate(DEFAULT_WATCHLIST)
+                ],
+            )
+
+    def get_active_watchlist_symbols(self) -> list[dict[str, Any]]:
+        """Distinct symbols (with exchange) across all active subscribers' watchlists."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT w.symbol AS symbol, w.exchange AS exchange
+                FROM watchlist w
+                JOIN subscribers s ON s.chat_id = w.chat_id
+                WHERE s.active = 1
+                ORDER BY w.symbol
                 """
             ).fetchall()
-        return [{"exchange": row["exchange"], "ticker": row["ticker"]} for row in rows]
+        return [dict(row) for row in rows]
 
     def upsert_earnings_calendar(self, items: list[dict[str, Any]]) -> None:
         updated_at = datetime.now(timezone.utc).isoformat()
@@ -295,18 +412,43 @@ class LocalSQLiteBackend:
             )
 
     def get_watchlist_earnings_for_date(self, earning_date: str) -> list[dict[str, Any]]:
+        """Earnings on earning_date for every active subscriber's watchlist symbols.
+
+        Joins earnings_calendar ⋈ watchlist ⋈ subscribers (active = 1); each row
+        is scoped to the subscriber (chat_id) that should be notified about it.
+        """
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT w.ticker AS symbol, w.exchange, e.earning_date,
-                       e.extended_hour, e.eps_estimate, e.revenue_estimate,
-                       e.updated_at
+                SELECT w.chat_id AS chat_id, w.symbol AS symbol, w.exchange AS exchange,
+                       e.earning_date, e.extended_hour, e.eps_estimate,
+                       e.revenue_estimate, e.updated_at
                 FROM watchlist w
-                JOIN earnings_calendar e ON e.symbol = w.ticker
-                WHERE e.earning_date = ?
-                ORDER BY w.position
+                JOIN earnings_calendar e ON e.symbol = w.symbol
+                JOIN subscribers s ON s.chat_id = w.chat_id
+                WHERE e.earning_date = ? AND s.active = 1
+                ORDER BY w.chat_id, w.position
                 """,
                 (earning_date,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_chat_watchlist_earnings(
+        self, chat_id: str, date_from: str, date_to: str
+    ) -> list[dict[str, Any]]:
+        """Cached earnings in [date_from, date_to] for chat_id's watchlist symbols."""
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT w.symbol AS symbol, w.exchange AS exchange,
+                       e.earning_date, e.extended_hour, e.eps_estimate,
+                       e.revenue_estimate, e.updated_at
+                FROM watchlist w
+                JOIN earnings_calendar e ON e.symbol = w.symbol
+                WHERE w.chat_id = ? AND e.earning_date BETWEEN ? AND ?
+                ORDER BY e.earning_date, w.position
+                """,
+                (chat_id, date_from, date_to),
             ).fetchall()
         return [dict(row) for row in rows]
 
@@ -340,6 +482,32 @@ class LocalSQLiteBackend:
                 VALUES (?, ?, ?, ?)
                 """,
                 [(chat_id, symbol, earning_date, sent_at) for symbol in symbols],
+            )
+
+    def get_company_summary(self, symbol: str, earning_date: str) -> str | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT summary FROM company_summaries
+                WHERE symbol = ? AND earning_date = ?
+                """,
+                (symbol, earning_date),
+            ).fetchone()
+        return row["summary"] if row else None
+
+    def upsert_company_summary(
+        self, symbol: str, earning_date: str, summary: str
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO company_summaries (symbol, earning_date, summary, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(symbol, earning_date) DO UPDATE SET
+                    summary = excluded.summary,
+                    created_at = excluded.created_at
+                """,
+                (symbol, earning_date, summary, datetime.now(timezone.utc).isoformat()),
             )
 
     def insert_news(self, items: list[dict[str, Any]]) -> int:

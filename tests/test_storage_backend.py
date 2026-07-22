@@ -139,6 +139,12 @@ def test_watchlist_earnings_join_and_notification_tracking(local_store):
     from agent.db.backend import get_backend
 
     backend = get_backend()
+    backend.subscribe("111")
+    backend.subscribe("222")
+    backend.unsubscribe("222")  # inactive: excluded from the notification join
+    backend.add_to_watchlist("111", "AAPL", exchange="NASDAQGS")
+    backend.add_to_watchlist("111", "NVDA", exchange="NASDAQGS")
+    backend.add_to_watchlist("222", "AAPL", exchange="NASDAQGS")
     backend.upsert_earnings_calendar(
         [
             {"symbol": "NVDA", "date": "2026-07-23", "hour": "amc"},
@@ -150,8 +156,11 @@ def test_watchlist_earnings_join_and_notification_tracking(local_store):
 
     rows = backend.get_watchlist_earnings_for_date("2026-07-23")
 
-    # Only watchlist symbols on the requested date, in watchlist position order.
-    assert [row["symbol"] for row in rows] == ["AAPL", "NVDA"]
+    # Only active subscriber "111" gets rows; "222" is inactive and excluded.
+    assert [(row["chat_id"], row["symbol"]) for row in rows] == [
+        ("111", "AAPL"),
+        ("111", "NVDA"),
+    ]
     assert rows[0]["exchange"] == "NASDAQGS"
     assert rows[0]["updated_at"] is not None
 

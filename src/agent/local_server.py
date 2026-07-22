@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 from json import JSONDecodeError
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 
+from agent.db.backend import get_backend
 from agent.market_summary import generate_market_summary, list_stored_news, refresh_news
 from agent.processor_handler import _process_update
 from agent.tools.earnings import get_earnings_calendar
@@ -60,6 +61,23 @@ async def market_summary(days_back: int = Query(1, ge=1, le=7)) -> dict:
 async def news(days_back: int = Query(1, ge=1, le=7)) -> dict:
     items = list_stored_news(days_back)
     return {"count": len(items), "news": items}
+
+
+@app.get("/watchlist/{chat_id}")
+async def watchlist(chat_id: str) -> dict:
+    items = get_backend().get_watchlist(chat_id)
+    return {"chat_id": chat_id, "count": len(items), "watchlist": items}
+
+
+@app.get("/watchlist/{chat_id}/earnings")
+async def watchlist_earnings(
+    chat_id: str, days: int = Query(14, ge=1, le=90)
+) -> dict:
+    today = date.today()
+    items = get_backend().get_chat_watchlist_earnings(
+        chat_id, today.isoformat(), (today + timedelta(days=days)).isoformat()
+    )
+    return {"chat_id": chat_id, "days": days, "count": len(items), "earnings": items}
 
 
 @app.get("/earnings")
