@@ -15,6 +15,15 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-22 — storage-backend-strategy-sprint — evaluator — ✅ Pass
+- 連結：docs/qa-reports/storage-backend-strategy-sprint.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -q` 124/124 passed（sandbox 對 ~/.cache/uv 有寫入限制，已用非 sandbox 模式重跑）；🔴 0、🟡 0（🟢 1，Protocol `get_watchlist` 預設值與既有 `LocalSQLiteBackend` 簽名不完全對齊，非本次引入、不影響 runtime）；循環次數 1；未解 P0/P1 0
+
+## 2026-07-22 — storage-backend-strategy-sprint — planner — spec + contract + ADR 完成
+- 連結：docs/specs/storage-backend-strategy.md, docs/contracts/storage-backend-strategy-sprint.md, docs/decisions/0003-storage-backend-strategy.md
+- 驗證：Unit not run（planner 階段）；Integration not required（交棒 generator）；E2E not required；External Smoke not requested（blocking: false）
+- 備註：內部重構——引入 `StorageBackend`（`typing.Protocol`）+ `DynamoDBBackend` class，`get_backend()` 依 backend 名回傳對應實例（維持 `@lru_cache` singleton），收斂 11 處 `if selected_backend_name()=="local"` wrapper 分支（conversations×2/subscribers×3/dedup×1/watchlist×4/earnings×1）成單一 `get_backend().X(...)`。Scope 取捨：Protocol 只涵蓋跨 backend 共用的 11 方法，local-only 方法（news/summaries/notifications/earnings join/export）不進 Protocol、不在 DynamoDBBackend 補 stub（見 ADR-0003）。dynamodb degenerate 行為維持不變（watchlist add/remove→NotImplementedError、get_watchlist→DEFAULT_WATCHLIST、seed/upsert_earnings→no-op）。`scheduler_handler._run()` 的 local vs live-fetch 流程分支不在此 sprint 收斂（非 storage 分派）。測試面向：既有 moto 測試（test_db/test_dedup/test_webhook）即為 DynamoDBBackend 覆蓋；需修 conftest（移除已刪除的 `_table.cache_clear()`、在 autouse env fixture 每測試前清 `get_backend` 快取防跨測試洩漏）。DynamoDBBackend 建構與 no-op 方法不得觸網（test_tools 在 dynamodb 無 moto 下會走 upsert no-op）。
+
 ## 2026-07-22 — watch-symbol-validation — evaluator — ✅ Pass
 - 連結：docs/qa-reports/watch-symbol-validation.md
 - 驗證：Unit pass（`PYTHONPATH=src uv run pytest tests/ -v`，118/118 passed）；Integration pass（`/watch`、`/unwatch` 情境含在同一 suite）；E2E not required；External Smoke not requested（blocking: false）

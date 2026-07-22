@@ -45,6 +45,28 @@ def test_invalid_storage_backend_fails(monkeypatch):
         selected_backend_name()
 
 
+def test_get_backend_returns_local_sqlite_backend_for_local(local_store):
+    from agent.db.backend import LocalSQLiteBackend, get_backend
+
+    assert isinstance(get_backend(), LocalSQLiteBackend)
+
+
+def test_get_backend_returns_dynamodb_backend_for_dynamodb(monkeypatch):
+    from agent.db.backend import DynamoDBBackend, get_backend
+
+    monkeypatch.setenv("STORAGE_BACKEND", "dynamodb")
+
+    assert isinstance(get_backend(), DynamoDBBackend)
+
+
+def test_dynamodb_backend_claim_update_id_first_claim_wins(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    assert backend.claim_update_id(999) is True
+    assert backend.claim_update_id(999) is False
+
+
 def test_local_backend_upserts_earnings_calendar(local_store):
     from agent.db.backend import get_backend
 
