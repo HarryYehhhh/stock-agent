@@ -61,6 +61,42 @@ def test_watch_missing_argument_gives_usage(local_store, fake_send):
     assert "用法" in body
 
 
+def test_watch_invalid_symbol_special_chars_gives_usage(local_store, fake_send):
+    _send_update("111", "/watch $$$weird!!")
+
+    body = fake_send.call_args.args[1]
+    assert "用法" in body
+
+
+def test_watch_symbol_too_long_gives_usage(local_store, fake_send):
+    _send_update("111", "/watch " + "A" * 11)
+
+    body = fake_send.call_args.args[1]
+    assert "用法" in body
+
+
+def test_watch_multi_word_argument_gives_usage(local_store, fake_send):
+    _send_update("111", "/watch AAPL MSFT")
+
+    body = fake_send.call_args.args[1]
+    assert "用法" in body
+
+
+def test_watch_accepts_symbol_with_dot_and_dash(local_store, fake_send):
+    _send_update("111", "/watch brk.b")
+    assert "BRK.B" in fake_send.call_args.args[1]
+
+    _send_update("111", "/watch bf-b")
+    assert "BF-B" in fake_send.call_args.args[1]
+
+
+def test_unwatch_invalid_symbol_gives_usage(local_store, fake_send):
+    _send_update("111", "/unwatch $$$weird!!")
+
+    body = fake_send.call_args.args[1]
+    assert "用法" in body
+
+
 def test_unwatch_removes_symbol_from_watchlist(local_store, fake_send):
     _send_update("111", "/watch AAPL")
     _send_update("111", "/unwatch AAPL")

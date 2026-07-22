@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-22 — watch-symbol-validation — evaluator — ✅ Pass
+- 連結：docs/qa-reports/watch-symbol-validation.md
+- 驗證：Unit pass（`PYTHONPATH=src uv run pytest tests/ -v`，118/118 passed）；Integration pass（`/watch`、`/unwatch` 情境含在同一 suite）；E2E not required；External Smoke not requested（blocking: false）
+- 備註：修正前次 sprint 🟡 issue——`/watch`、`/unwatch` 補上 `SYMBOL_RE.fullmatch()` regex 驗證，正確拒絕特殊字元／過長／多字參數，接受 `BRK.B`/`BF-B` 型態；新增 6 條測試。🔴 0、🟡 0；循環次數 1；未解 P0/P1：0/0。
+
 ## 2026-07-22 — per-subscriber-watchlist-sprint — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/per-subscriber-watchlist-sprint.md, docs/contracts/per-subscriber-watchlist-sprint.md
 - 驗證：Unit pass（`PYTHONPATH=src uv run pytest tests/ -v`，110/110 passed）；Integration pass（scheduler/processor per-subscriber 情境含在同一 suite）；E2E not required；External Smoke not requested（blocking: false）

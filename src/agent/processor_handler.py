@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from aws_lambda_powertools import Logger
 
@@ -22,6 +23,9 @@ logger = Logger()
 WATCH_USAGE = "用法：/watch <SYMBOL>，例如 /watch AAPL"
 UNWATCH_USAGE = "用法：/unwatch <SYMBOL>，例如 /unwatch AAPL"
 LOCAL_ONLY_MESSAGE = "⚠️ 目前僅本地模式支援自訂追蹤清單。"
+
+# US ticker：1-10 個字母，可選 . 或 - 接 1-3 個字母後綴（例如 BRK.B、BF-B）
+SYMBOL_RE = re.compile(r"[A-Z]{1,10}([.\-][A-Z]{1,3})?")
 
 WELCOME = (
     "👋 您好！我是美股財報 AI 助理\n\n"
@@ -82,10 +86,10 @@ def _process_update(body: dict) -> None:
 
     if text == "/watch" or text.startswith("/watch "):
         arg = text[len("/watch") :].strip()
-        if not arg or " " in arg:
+        symbol = arg.upper()
+        if not arg or not SYMBOL_RE.fullmatch(symbol):
             send_message(chat_id, WATCH_USAGE)
             return
-        symbol = arg.upper()
         try:
             added = add_to_watchlist(chat_id, symbol)
         except NotImplementedError:
@@ -99,10 +103,10 @@ def _process_update(body: dict) -> None:
 
     if text == "/unwatch" or text.startswith("/unwatch "):
         arg = text[len("/unwatch") :].strip()
-        if not arg or " " in arg:
+        symbol = arg.upper()
+        if not arg or not SYMBOL_RE.fullmatch(symbol):
             send_message(chat_id, UNWATCH_USAGE)
             return
-        symbol = arg.upper()
         try:
             removed = remove_from_watchlist(chat_id, symbol)
         except NotImplementedError:
