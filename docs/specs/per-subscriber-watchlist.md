@@ -14,7 +14,7 @@
 ## Background（現況）
 - Local backend（`src/agent/db/backend.py`）目前的 `watchlist` 表是全域單一清單：`ticker TEXT PRIMARY KEY, exchange TEXT NOT NULL, position INTEGER NOT NULL`。
 - `_init_schema()` 每次啟動都呼叫 `_seed_watchlist()`，用 `DEFAULT_WATCHLIST`（27 檔）**強制覆蓋**整張表——`INSERT ... ON CONFLICT UPDATE` 加上 `DELETE ... WHERE ticker NOT IN (...)`。這會在每次 backend 建構時洗掉任何自訂項目。
-- `scheduler_handler.py` local 路徑：`_sync_earnings_calendar()` 逐檔抓未來 30 天財報寫入 sqlite，再用 `get_watchlist_earnings_for_date(tomorrow)`（watchlist ⋈ earnings_calendar 全域 join）取出隔天有財報者，對「每個 active subscriber」用 `unnotified_symbols` / `mark_notified` 做 per-user 去重，最後**共用同一份 summary** 推給所有 pending subscriber。
+- `scheduler_handler.py` local 路徑：`sync_earnings()` 逐檔抓未來 30 天財報寫入 sqlite，再用 `get_watchlist_earnings_for_date(tomorrow)`（watchlist ⋈ earnings_calendar 全域 join）取出隔天有財報者，對「每個 active subscriber」用 `unnotified_symbols` / `mark_notified` 做 per-user 去重，最後**共用同一份 summary** 推給所有 pending subscriber。
 - `earnings_notifications` 表 PK 已是 `(chat_id, symbol, earning_date)`，本來就支援 per-user 去重，沿用。
 - DynamoDB（Lambda production）路徑 `_notify_live()` 仍走 live-fetch + 全域 `DEFAULT_WATCHLIST`，所有 subscriber 收到同一份。
 - `ticker` 命名散落於：`DEFAULT_WATCHLIST` 的 dict key、`watchlist.get_watchlist()` 回傳 shape、`backend.py` 的 watchlist 相關方法、`scheduler_handler.py` 的 `item["ticker"]`、`tests/test_watchlist.py` 與 `tests/test_scheduler.py`。
