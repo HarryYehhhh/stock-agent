@@ -191,3 +191,82 @@ def test_watchlist_earnings_join_and_notification_tracking(local_store):
     backend.mark_notified("111", symbols, "2026-07-23")
     assert backend.unnotified_symbols("111", symbols, "2026-07-23") == []
     assert backend.unnotified_symbols("222", symbols, "2026-07-23") == symbols
+
+
+def test_insert_news_returns_distinct_inserted_count_not_attempted_count(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    items = [
+        {
+            "category": "general",
+            "symbol": "AAPL",
+            "headline": "Apple beats estimates",
+            "summary": "...",
+            "url": "https://example.com/1",
+            "published_at": "2026-07-23T00:00:00Z",
+        },
+        {
+            "category": "general",
+            "symbol": "AAPL",
+            "headline": "Apple beats estimates",  # duplicate headline within same batch
+            "summary": "...",
+            "url": "https://example.com/1-dup",
+            "published_at": "2026-07-23T00:00:00Z",
+        },
+        {
+            "category": "general",
+            "symbol": "NVDA",
+            "headline": "Nvidia ships new chip",
+            "summary": "...",
+            "url": "https://example.com/2",
+            "published_at": "2026-07-23T00:00:00Z",
+        },
+    ]
+
+    inserted = backend.insert_news(items)
+
+    assert inserted == 2  # only 2 distinct headlines actually inserted
+
+    with sqlite3.connect(local_store) as conn:
+        total, distinct = conn.execute(
+            "SELECT count(*), count(DISTINCT headline) FROM news"
+        ).fetchone()
+
+    assert total == distinct == 2
+
+
+def test_insert_news_reinserting_existing_headlines_returns_zero(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    items = [
+        {
+            "category": "general",
+            "symbol": "AAPL",
+            "headline": "Apple beats estimates",
+            "summary": "...",
+            "url": "https://example.com/1",
+            "published_at": "2026-07-23T00:00:00Z",
+        },
+        {
+            "category": "general",
+            "symbol": "NVDA",
+            "headline": "Nvidia ships new chip",
+            "summary": "...",
+            "url": "https://example.com/2",
+            "published_at": "2026-07-23T00:00:00Z",
+        },
+    ]
+    backend.insert_news(items)
+
+    inserted_again = backend.insert_news(items)
+
+    assert inserted_again == 0
+
+    with sqlite3.connect(local_store) as conn:
+        total, distinct = conn.execute(
+            "SELECT count(*), count(DISTINCT headline) FROM news"
+        ).fetchone()
+
+    assert total == distinct == 2

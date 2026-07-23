@@ -12,7 +12,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from agent import processor_handler, scheduler_handler
+from agent import local_server, market_summary, processor_handler, scheduler_handler
 from agent.db.backend import get_backend
 from agent.local_server import app
 from agent.tools import _http as tools_http
@@ -123,6 +123,98 @@ def test_rest_watchlist_earnings_empty_for_unknown_chat(local_store):
 
     assert response.status_code == 200
     assert response.json()["count"] == 0
+
+
+def _groq_text_response(text: str):
+    message = SimpleNamespace(content=text, tool_calls=None)
+    return SimpleNamespace(
+        choices=[SimpleNamespace(message=message)],
+        usage=SimpleNamespace(prompt_tokens=1, completion_tokens=1),
+    )
+
+
+@pytest.fixture
+def mock_groq_client(monkeypatch):
+    client = MagicMock()
+    monkeypatch.setattr(market_summary, "_client", lambda: client)
+    return client
+
+
+@pytest.fixture
+def mock_finnhub_news(monkeypatch):
+    def fake_company_news(symbol, date_from, date_to):
+        return [{"headline": f"{symbol} beats estimates", "summary": "s"}]
+
+    def fake_tech_news():
+        return [{"headline": "New AI model launched", "summary": ""}]
+
+    monkeypatch.setattr(market_summary, "_fetch_company_news", fake_company_news)
+    monkeypatch.setattr(market_summary, "_fetch_tech_news", fake_tech_news)
+
+
+@pytest.fixture
+def mock_index_quotes(monkeypatch):
+    monkeypatch.setattr(
+        market_summary, "get_quote", lambda symbol: {"current_price": 100.0, "change_percent": 1.0}
+    )
+
+
+def test_rest_market_summary_refreshes_and_generates_summary(
+    local_store, mock_finnhub_news, mock_groq_client, mock_index_quotes
+):
+    mock_groq_client.chat.completions.create.return_value = _groq_text_response("摘要內容")
+
+    response = TestClient(app).get("/market-summary", params={"days_back": 1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stored_news"] == len(market_summary.BIG7) + 1  # 7 big7 + 1 AI item
+    assert body["summary"].endswith("摘要內容")
+    assert "summary_id" in body
+
+    with sqlite3.connect(local_store) as conn:
+        count = conn.execute("SELECT COUNT(*) FROM news").fetchone()[0]
+    assert count == body["stored_news"]
+
+
+def test_rest_market_summary_timeout_returns_504(local_store, monkeypatch):
+    def boom(days_back):
+        raise httpx.TimeoutException("finnhub timeout")
+
+    monkeypatch.setattr(local_server, "refresh_news", boom)
+
+    response = TestClient(app).get("/market-summary")
+
+    assert response.status_code == 504
+
+
+def test_rest_news_returns_stored_news_items(local_store, mock_finnhub_news):
+    inserted = market_summary.refresh_news(days_back=1)
+
+    response = TestClient(app).get("/news", params={"days_back": 1})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["count"] == inserted
+    assert len(body["news"]) == inserted
+    headlines = {item["headline"] for item in body["news"]}
+    assert "New AI model launched" in headlines
+    assert any(item["symbol"] == "AAPL" and item["category"] == "big7" for item in body["news"])
+
+
+def test_rest_market_summary_skips_groq_when_store_empty(
+    local_store, monkeypatch, mock_groq_client, mock_index_quotes
+):
+    monkeypatch.setattr(market_summary, "_fetch_company_news", lambda *a, **k: [])
+    monkeypatch.setattr(market_summary, "_fetch_tech_news", lambda: [])
+
+    response = TestClient(app).get("/market-summary")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["stored_news"] == 0
+    assert "請先執行新聞抓取" in body["summary"]
+    mock_groq_client.chat.completions.create.assert_not_called()
 
 
 class FinnhubStubHandler(BaseHTTPRequestHandler):
