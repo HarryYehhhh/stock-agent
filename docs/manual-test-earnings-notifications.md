@@ -7,7 +7,7 @@
 
 - `earnings_calendar` 新增 `updated_at` 欄位與 `idx_earnings_date` index（含舊 DB 自動 migration）
 - 新表 `earnings_notifications`（推播冪等紀錄，本計劃只驗證表存在）
-- `scheduler_handler._sync_earnings_calendar()`：逐檔同步 watchlist 未來 30 天財報進 SQLite，回傳失敗的 ticker 清單
+- `scheduler_handler.sync_earnings()`（cron 入口：`make sync-earnings` / `python -m agent.scheduler_handler sync`）：逐檔同步 watchlist 未來 30 天財報進 SQLite，回傳失敗的 ticker 清單
 - `backend.get_watchlist_earnings_for_date(date)`：watchlist ⋈ earnings_calendar join 查詢
 
 ## 前置準備
@@ -54,8 +54,8 @@ sqlite3 .local/earnings-agent.sqlite3 "SELECT name FROM sqlite_master WHERE type
 
 ```bash
 PYTHONPATH=src uv run python <<'EOF'
-from agent.scheduler_handler import _sync_earnings_calendar
-failed = _sync_earnings_calendar()
+from agent.scheduler_handler import sync_earnings
+failed = sync_earnings()
 print("failed tickers:", failed)
 EOF
 ```
@@ -103,8 +103,8 @@ EOF
 sqlite3 .local/earnings-agent.sqlite3 "SELECT COUNT(*) FROM earnings_calendar;"   # 記下筆數
 
 FINNHUB_API_KEY=invalid PYTHONPATH=src uv run python <<'EOF'
-from agent.scheduler_handler import _sync_earnings_calendar
-failed = _sync_earnings_calendar()
+from agent.scheduler_handler import sync_earnings
+failed = sync_earnings()
 print(f"failed tickers ({len(failed)}):", failed)
 EOF
 
