@@ -15,6 +15,15 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-23 — watchlist-notify-flow-verification（T3 流程 A）— evaluator — ✅ Pass
+- 連結：docs/qa-reports/manual-test-watchlist-notify.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -q` 基準 124 → 最終 129 passed（sandbox 擋既有 `finnhub_stub` 12 個 socket 測試，已用 `dangerouslyDisableSandbox` 重跑）；新增 `tests/test_watchlist_notify_flow.py` 5 案例對應 spec 全部 7 條 acceptance criteria，全鏈路驅動 `_process_update → sync_earnings → handler(_notify_local)`，僅打樁 Finnhub/Groq/Telegram 三個外部邊界；冪等斷言已用 mutation test（拿掉 `mark_notified`）驗證有效；🔴 0、🟡 0（🟢 2：一處恆真斷言、建議合併 T1/T2 分支避免基準漂移）；循環次數 1；未解 P0/P1 0；本任務為 agent 自動化整合驗證，非人工手動互動；`src/` 無改動，未發現既有真 bug
+
+## 2026-07-23 — watchlist-notify-flow-verification（T3 流程 A）— planner — spec + contract 完成
+- 連結：docs/specs/watchlist-notify-flow-verification.md, docs/contracts/watchlist-notify-flow-verification.md
+- 驗證：Unit not run（planner 階段，且此環境無 Bash 無法親跑 pytest）；Integration not required（交棒 generator）；E2E not required；External Smoke not requested（blocking: false）
+- 備註：把 T3 流程 A 由「使用者手動互動」改造成**全自動化 e2e 整合測試**（使用者明確偏好）。產出單一新測試檔 `tests/test_watchlist_notify_flow.py` 串鏈路 `/subscribe`→`/watch`→`sync_earnings()`→notify，覆蓋 subscribe 寫入/watch 加入/sync 寫 earnings_calendar/notify 對正確 subscriber 發正確 symbols/冪等/非訂閱者或無資料不誤發。驅動方式決策：步驟1-2 直呼 `processor_handler._process_update`（真實指令路由，不用 POST /webhook 因其只 enqueue SQS）、步驟3 直呼 `sync_earnings()`、步驟4-5 直呼 `scheduler_handler.handler`（local 走 `_notify_local`）。Mock 邊界決策：Finnhub 改用 **socketless** 假 client（monkeypatch `agent.tools._http._client`）而非既有 `finnhub_stub` 真 HTTP server，避開 sandbox 對 socket bind 的限制、且不動 test_local_integration.py 既有 fixture；Groq monkeypatch `scheduler_handler.run_agent`；Telegram monkeypatch `send_message`。無 ADR（純測試建置，無不可逆架構決策）。未發現既有真 bug；若 generator 揭露則比照 insert_news 先於 QA report 標明再最小修正。基準：planner 無 Bash 無法親跑，CHANGELOG 上次記錄 124/124（早於 T1 新增測試），generator/evaluator 須先跑 `PYTHONPATH=src uv run pytest tests/ -q` 確立確切基準 N。QA report 指定檔名 `docs/qa-reports/manual-test-watchlist-notify.md`，內容須標明為自動化驗證。
+
 ## 2026-07-23 — manual-test-market-summary（T3 流程 B） — evaluator — ✅ Pass
 - 連結：docs/qa-reports/manual-test-market-summary.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -q` 130/130 passed（sandbox 對本機 socket bind 有限制，`test_local_integration.py` 12 條以非 sandbox 模式重跑確認）；🔴 0、🟡 1（已修復）；循環次數 1；未解 P0/P1 0。手測涵蓋 `/market-summary`、`/news`，DB 權威查詢確認 `news`/`market_summaries` 有資料、摘要繁中且 `news_ids` 可稽核、dedup（`count(*)=count(DISTINCT headline)=54`）正確。測試中揪出 `insert_news()` 用不可靠的 `cur.rowcount` 累加 `INSERT OR IGNORE`、回傳「嘗試插入數」而非「實際新增數」的 bug，已改用 `conn.total_changes` 差值修復（`src/agent/db/backend.py`）並補 2 條迴歸測試（`tests/test_storage_backend.py`）。範圍僅涵蓋 T3 流程 B；流程 A（Telegram watchlist 財報通知）尚未測試，待補 `docs/qa-reports/manual-test-watchlist-notify.md`。
