@@ -557,10 +557,10 @@ class LocalSQLiteBackend:
     def insert_news(self, items: list[dict[str, Any]]) -> int:
         """Insert news rows, ignoring duplicate headlines. Returns rows inserted."""
         fetched_at = datetime.now(timezone.utc).isoformat()
-        inserted = 0
         with self._connect() as conn:
+            before = conn.total_changes
             for it in items:
-                cur = conn.execute(
+                conn.execute(
                     """
                     INSERT OR IGNORE INTO news (
                         category, symbol, headline, summary, url,
@@ -578,8 +578,7 @@ class LocalSQLiteBackend:
                         fetched_at,
                     ),
                 )
-                inserted += cur.rowcount
-        return inserted
+            return conn.total_changes - before
 
     def list_news_since(self, published_from: str) -> list[dict[str, Any]]:
         with self._connect() as conn:

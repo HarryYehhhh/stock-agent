@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-23 — manual-test-market-summary（T3 流程 B） — evaluator — ✅ Pass
+- 連結：docs/qa-reports/manual-test-market-summary.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -q` 130/130 passed（sandbox 對本機 socket bind 有限制，`test_local_integration.py` 12 條以非 sandbox 模式重跑確認）；🔴 0、🟡 1（已修復）；循環次數 1；未解 P0/P1 0。手測涵蓋 `/market-summary`、`/news`，DB 權威查詢確認 `news`/`market_summaries` 有資料、摘要繁中且 `news_ids` 可稽核、dedup（`count(*)=count(DISTINCT headline)=54`）正確。測試中揪出 `insert_news()` 用不可靠的 `cur.rowcount` 累加 `INSERT OR IGNORE`、回傳「嘗試插入數」而非「實際新增數」的 bug，已改用 `conn.total_changes` 差值修復（`src/agent/db/backend.py`）並補 2 條迴歸測試（`tests/test_storage_backend.py`）。範圍僅涵蓋 T3 流程 B；流程 A（Telegram watchlist 財報通知）尚未測試，待補 `docs/qa-reports/manual-test-watchlist-notify.md`。
+
 ## 2026-07-22 — storage-backend-strategy-sprint — evaluator — ✅ Pass
 - 連結：docs/qa-reports/storage-backend-strategy-sprint.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -q` 124/124 passed（sandbox 對 ~/.cache/uv 有寫入限制，已用非 sandbox 模式重跑）；🔴 0、🟡 0（🟢 1，Protocol `get_watchlist` 預設值與既有 `LocalSQLiteBackend` 簽名不完全對齊，非本次引入、不影響 runtime）；循環次數 1；未解 P0/P1 0
