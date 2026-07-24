@@ -64,7 +64,7 @@ launchctl unload ~/Library/LaunchAgents/com.earnings-agent.daily.plist
 
 ## 改時間
 
-預設觸發時間是台北時區早上 8:00（plist 內建假設本機時區為 Asia/Taipei，`StartCalendarInterval` 用的是系統本地時間，不是 UTC）。要改時間：
+預設觸發時間是台北時區早上 10:30（plist 內建假設本機時區為 Asia/Taipei，`StartCalendarInterval` 用的是系統本地時間，不是 UTC）。要改時間：
 
 1. 編輯 `~/Library/LaunchAgents/com.earnings-agent.daily.plist`（或先改 repo 內的範本 `scripts/com.earnings-agent.daily.plist` 再重新複製一份過去）
 2. 調整 `StartCalendarInterval` 底下的 `Hour` / `Minute`（24 小時制），例如改成 7:30：

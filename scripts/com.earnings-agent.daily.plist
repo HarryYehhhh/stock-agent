@@ -10,7 +10,7 @@
 
   To change the run time, edit the <key>Hour</key>/<key>Minute</key> values
   under StartCalendarInterval below (24h clock, in the system's local
-  timezone — this machine is Asia/Taipei, so Hour 8 = 08:00 Taipei time).
+  timezone — this machine is Asia/Taipei, so Hour 10 = 10:00 Taipei time).
 -->
 <plist version="1.0">
 <dict>
@@ -35,9 +35,9 @@
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
-        <integer>8</integer>
+        <integer>10</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>30</integer>
     </dict>
 
     <key>StandardOutPath</key>
