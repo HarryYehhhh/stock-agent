@@ -2,6 +2,7 @@ from agent.db.conversations import save_message
 from agent.db.backend import LocalSQLiteBackend
 from agent.db.dedup import claim_update_id
 from agent.db.subscribers import subscribe
+from agent.db.watchlist import add_to_watchlist
 
 
 def _scan_counts(aws):
@@ -9,6 +10,7 @@ def _scan_counts(aws):
         "conversations": aws["ddb"].Table("test-conversations").scan()["Count"],
         "subscribers": aws["ddb"].Table("test-subscribers").scan()["Count"],
         "dedup": aws["ddb"].Table("test-processed").scan()["Count"],
+        "watchlist": aws["ddb"].Table("test-watchlist").scan()["Count"],
     }
 
 
@@ -47,6 +49,7 @@ def test_upload_dry_run_default_does_not_write(aws, local_store, capsys):
     save_message("c1", "user", "hello")
     subscribe("c1")
     claim_update_id(900)
+    add_to_watchlist("c1", "AAPL")
 
     assert main([]) == 0
 
@@ -55,7 +58,13 @@ def test_upload_dry_run_default_does_not_write(aws, local_store, capsys):
     assert "conversations=1" in out
     assert "subscribers=1" in out
     assert "dedup=1" in out
-    assert _scan_counts(aws) == {"conversations": 0, "subscribers": 0, "dedup": 0}
+    assert "watchlist=1" in out
+    assert _scan_counts(aws) == {
+        "conversations": 0,
+        "subscribers": 0,
+        "dedup": 0,
+        "watchlist": 0,
+    }
 
 
 def test_upload_write_copies_rows_to_dynamodb(aws, local_store):
@@ -65,16 +74,26 @@ def test_upload_write_copies_rows_to_dynamodb(aws, local_store):
     save_message("c1", "assistant", "hi")
     subscribe("c1")
     claim_update_id(901)
+    add_to_watchlist("c1", "AAPL")
+    add_to_watchlist("c1", "NVDA")
 
     assert main(["--write"]) == 0
 
     conversations = aws["ddb"].Table("test-conversations").scan()["Items"]
     subscribers = aws["ddb"].Table("test-subscribers").scan()["Items"]
     dedup = aws["ddb"].Table("test-processed").scan()["Items"]
+    watchlist = aws["ddb"].Table("test-watchlist").scan()["Items"]
 
     assert [item["content"] for item in conversations] == ["hello", "hi"]
     assert subscribers == [{"chat_id": "c1", "subscribed_at": subscribers[0]["subscribed_at"], "active": True}]
     assert dedup == [{"update_id": 901, "ttl": dedup[0]["ttl"]}]
+    assert sorted(item["symbol"] for item in watchlist) == ["AAPL", "NVDA"]
+
+    # The three cache tables (earnings/notifications/summaries) are out of
+    # scope for upload_local_store — they must remain untouched.
+    assert aws["ddb"].Table("test-earnings-calendar").scan()["Count"] == 0
+    assert aws["ddb"].Table("test-earnings-notifications").scan()["Count"] == 0
+    assert aws["ddb"].Table("test-company-summaries").scan()["Count"] == 0
 
 
 def test_upload_write_failure_returns_nonzero_and_preserves_local_store(local_store, monkeypatch, capsys):

@@ -7,6 +7,7 @@ import os
 import sqlite3
 import time
 from datetime import datetime, timezone
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Protocol
@@ -17,13 +18,20 @@ from botocore.exceptions import ClientError
 
 from agent.config import (
     aws_region,
+    company_summaries_table,
     conversations_table,
+    earnings_calendar_table,
+    earnings_notifications_table,
     processed_updates_table,
     subscribers_table,
+    watchlist_table,
 )
 
 CONVERSATION_TTL_SECONDS = 30 * 24 * 3600
 DEDUP_TTL_SECONDS = 3600
+EARNINGS_CALENDAR_TTL_SECONDS = 45 * 24 * 3600
+EARNINGS_NOTIFICATIONS_TTL_SECONDS = 30 * 24 * 3600
+COMPANY_SUMMARIES_TTL_SECONDS = 30 * 24 * 3600
 DEFAULT_LOCAL_STORE_PATH = ".local/earnings-agent.sqlite3"
 
 
@@ -42,11 +50,15 @@ def local_store_path() -> Path:
 
 
 class StorageBackend(Protocol):
-    """Cross-backend storage interface (conversations / subscribers / dedup / watchlist / earnings upsert).
+    """Cross-backend storage interface (conversations / subscribers / dedup /
+    watchlist / earnings cache / notification idempotency / company summaries).
 
-    Local-only methods (earnings cache join, news, market summaries, company
-    summaries, notifications, export) are intentionally excluded — those code
-    paths only run on `LocalSQLiteBackend`. See ADR-0003.
+    These methods are implemented by both `LocalSQLiteBackend` and
+    `DynamoDBBackend` (ADR-0003 established the Protocol; ADR-0004 extends its
+    scope to watchlist/earnings-cache/notifications/company-summaries, which
+    were previously local-only). News / market summaries / `export_rows`
+    remain local-only and are intentionally excluded — those code paths only
+    run on `LocalSQLiteBackend`.
     """
 
     def save_message(self, chat_id: str, role: str, content: str) -> None: ...
@@ -70,6 +82,28 @@ class StorageBackend(Protocol):
     def seed_watchlist_if_empty(self, chat_id: str) -> None: ...
 
     def upsert_earnings_calendar(self, items: list[dict]) -> None: ...
+
+    def get_active_watchlist_symbols(self) -> list[dict]: ...
+
+    def get_watchlist_earnings_for_date(self, earning_date: str) -> list[dict]: ...
+
+    def get_chat_watchlist_earnings(
+        self, chat_id: str, date_from: str, date_to: str
+    ) -> list[dict]: ...
+
+    def unnotified_symbols(
+        self, chat_id: str, symbols: list[str], earning_date: str
+    ) -> list[str]: ...
+
+    def mark_notified(
+        self, chat_id: str, symbols: list[str], earning_date: str
+    ) -> None: ...
+
+    def get_company_summary(self, symbol: str, earning_date: str) -> str | None: ...
+
+    def upsert_company_summary(
+        self, symbol: str, earning_date: str, summary: str
+    ) -> None: ...
 
 
 @lru_cache(maxsize=1)
@@ -645,10 +679,21 @@ class LocalSQLiteBackend:
                     "SELECT update_id, ttl FROM processed_updates ORDER BY update_id"
                 ).fetchall()
             ]
+            watchlist = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT chat_id, symbol, position
+                    FROM watchlist
+                    ORDER BY chat_id, position
+                    """
+                ).fetchall()
+            ]
         return {
             "conversations": conversations,
             "subscribers": subscribers,
             "dedup": dedup,
+            "watchlist": watchlist,
         }
 
 
@@ -664,6 +709,10 @@ class DynamoDBBackend:
         self._conversations = resource.Table(conversations_table())
         self._subscribers = resource.Table(subscribers_table())
         self._processed_updates = resource.Table(processed_updates_table())
+        self._watchlist = resource.Table(watchlist_table())
+        self._earnings_calendar = resource.Table(earnings_calendar_table())
+        self._earnings_notifications = resource.Table(earnings_notifications_table())
+        self._company_summaries = resource.Table(company_summaries_table())
 
     def save_message(self, chat_id: str, role: str, content: str) -> None:
         self._conversations.put_item(
@@ -733,19 +782,227 @@ class DynamoDBBackend:
             raise
 
     def get_watchlist(self, chat_id: str | None = None) -> list[dict[str, Any]]:
-        """DynamoDB backend has no per-subscriber watchlist; returns the global default."""
-        from agent.db.watchlist import DEFAULT_WATCHLIST
+        """chat_id's own watchlist, sorted by position.
 
-        return [item.copy() for item in DEFAULT_WATCHLIST]
+        chat_id=None is a transitional branch returning the global
+        DEFAULT_WATCHLIST, kept for `scheduler_handler._notify_live()` (PR-2
+        removes `_notify_live` and this branch — see ADR-0004 #8).
+        """
+        if chat_id is None:
+            from agent.db.watchlist import DEFAULT_WATCHLIST
+
+            return [item.copy() for item in DEFAULT_WATCHLIST]
+
+        resp = self._watchlist.query(KeyConditionExpression=Key("chat_id").eq(chat_id))
+        items = sorted(resp.get("Items", []), key=lambda item: item["position"])
+        return [{"symbol": item["symbol"]} for item in items]
 
     def add_to_watchlist(self, chat_id: str, symbol: str) -> bool:
-        raise NotImplementedError("watchlist management is only supported on the local backend")
+        """Add symbol (uppercased) to chat_id's watchlist. Returns False if already present."""
+        symbol = symbol.upper()
+        resp = self._watchlist.query(KeyConditionExpression=Key("chat_id").eq(chat_id))
+        items = resp.get("Items", [])
+        next_position = 0 if not items else max(item["position"] for item in items) + 1
+        try:
+            self._watchlist.put_item(
+                Item={"chat_id": chat_id, "symbol": symbol, "position": next_position},
+                ConditionExpression="attribute_not_exists(symbol)",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
 
     def remove_from_watchlist(self, chat_id: str, symbol: str) -> bool:
-        raise NotImplementedError("watchlist management is only supported on the local backend")
+        symbol = symbol.upper()
+        try:
+            self._watchlist.delete_item(
+                Key={"chat_id": chat_id, "symbol": symbol},
+                ConditionExpression="attribute_exists(symbol)",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
 
     def seed_watchlist_if_empty(self, chat_id: str) -> None:
-        """No-op: the dynamodb backend already returns DEFAULT_WATCHLIST globally."""
+        """Seed chat_id's watchlist with DEFAULT_WATCHLIST only if it has no rows yet."""
+        from agent.db.watchlist import DEFAULT_WATCHLIST
+
+        resp = self._watchlist.query(
+            KeyConditionExpression=Key("chat_id").eq(chat_id), Limit=1
+        )
+        if resp.get("Items"):
+            return
+        with self._watchlist.batch_writer() as writer:
+            for position, item in enumerate(DEFAULT_WATCHLIST):
+                writer.put_item(
+                    Item={"chat_id": chat_id, "symbol": item["symbol"], "position": position}
+                )
 
     def upsert_earnings_calendar(self, items: list[dict[str, Any]]) -> None:
-        """No-op: the dynamodb backend does not cache the earnings calendar."""
+        if not items:
+            return
+        updated_at = datetime.now(timezone.utc).isoformat()
+        ttl = int(time.time()) + EARNINGS_CALENDAR_TTL_SECONDS
+        for item in items:
+            if not item.get("symbol") or not item.get("date"):
+                continue
+            record: dict[str, Any] = {
+                "symbol": item["symbol"].upper(),
+                "earning_date": item["date"],
+                "extended_hour": item.get("hour"),
+                "updated_at": updated_at,
+                "ttl": ttl,
+            }
+            if item.get("epsEstimate") is not None:
+                record["eps_estimate"] = Decimal(str(item["epsEstimate"]))
+            if item.get("revenueEstimate") is not None:
+                record["revenue_estimate"] = Decimal(str(item["revenueEstimate"]))
+            self._earnings_calendar.put_item(Item=record)
+
+    def get_active_watchlist_symbols(self) -> list[dict[str, Any]]:
+        """Distinct symbols across all active subscribers' watchlists."""
+        symbols: set[str] = set()
+        for chat_id in self.get_all_active():
+            resp = self._watchlist.query(KeyConditionExpression=Key("chat_id").eq(chat_id))
+            symbols.update(item["symbol"] for item in resp.get("Items", []))
+        return [{"symbol": symbol} for symbol in sorted(symbols)]
+
+    def get_watchlist_earnings_for_date(self, earning_date: str) -> list[dict[str, Any]]:
+        """Earnings on earning_date for every active subscriber's watchlist symbols.
+
+        Application-side join: GSI query for the day's earnings once, then
+        per active subscriber query their watchlist and intersect in memory.
+        """
+        resp = self._earnings_calendar.query(
+            IndexName="earning-date-index",
+            KeyConditionExpression=Key("earning_date").eq(earning_date),
+        )
+        earnings_items = list(resp.get("Items", []))
+        while "LastEvaluatedKey" in resp:
+            resp = self._earnings_calendar.query(
+                IndexName="earning-date-index",
+                KeyConditionExpression=Key("earning_date").eq(earning_date),
+                ExclusiveStartKey=resp["LastEvaluatedKey"],
+            )
+            earnings_items.extend(resp.get("Items", []))
+        earnings_by_symbol = {item["symbol"]: item for item in earnings_items}
+
+        rows: list[dict[str, Any]] = []
+        for chat_id in self.get_all_active():
+            resp = self._watchlist.query(KeyConditionExpression=Key("chat_id").eq(chat_id))
+            watchlist_items = sorted(resp.get("Items", []), key=lambda item: item["position"])
+            for wi in watchlist_items:
+                earning = earnings_by_symbol.get(wi["symbol"])
+                if earning is None:
+                    continue
+                rows.append(
+                    {
+                        "chat_id": chat_id,
+                        "symbol": wi["symbol"],
+                        "earning_date": earning["earning_date"],
+                        "extended_hour": earning.get("extended_hour"),
+                        "eps_estimate": float(earning["eps_estimate"])
+                        if "eps_estimate" in earning
+                        else None,
+                        "revenue_estimate": float(earning["revenue_estimate"])
+                        if "revenue_estimate" in earning
+                        else None,
+                        "updated_at": earning.get("updated_at"),
+                    }
+                )
+        rows.sort(key=lambda row: row["chat_id"])  # stable: per-chat_id order already by position
+        return rows
+
+    def get_chat_watchlist_earnings(
+        self, chat_id: str, date_from: str, date_to: str
+    ) -> list[dict[str, Any]]:
+        """Cached earnings in [date_from, date_to] for chat_id's watchlist symbols."""
+        resp = self._watchlist.query(KeyConditionExpression=Key("chat_id").eq(chat_id))
+        watchlist_items = sorted(resp.get("Items", []), key=lambda item: item["position"])
+
+        rows: list[dict[str, Any]] = []
+        for wi in watchlist_items:
+            e_resp = self._earnings_calendar.query(
+                KeyConditionExpression=Key("symbol").eq(wi["symbol"])
+                & Key("earning_date").between(date_from, date_to)
+            )
+            for earning in e_resp.get("Items", []):
+                rows.append(
+                    {
+                        "symbol": wi["symbol"],
+                        "earning_date": earning["earning_date"],
+                        "extended_hour": earning.get("extended_hour"),
+                        "eps_estimate": float(earning["eps_estimate"])
+                        if "eps_estimate" in earning
+                        else None,
+                        "revenue_estimate": float(earning["revenue_estimate"])
+                        if "revenue_estimate" in earning
+                        else None,
+                        "updated_at": earning.get("updated_at"),
+                        "_position": wi["position"],
+                    }
+                )
+        rows.sort(key=lambda row: (row["earning_date"], row["_position"]))
+        for row in rows:
+            del row["_position"]
+        return rows
+
+    def unnotified_symbols(
+        self, chat_id: str, symbols: list[str], earning_date: str
+    ) -> list[str]:
+        if not symbols:
+            return []
+        notified: set[str] = set()
+        for symbol in symbols:
+            resp = self._earnings_notifications.get_item(
+                Key={"chat_id": chat_id, "notify_key": f"{symbol}#{earning_date}"}
+            )
+            if "Item" in resp:
+                notified.add(symbol)
+        return [symbol for symbol in symbols if symbol not in notified]
+
+    def mark_notified(
+        self, chat_id: str, symbols: list[str], earning_date: str
+    ) -> None:
+        sent_at = datetime.now(timezone.utc).isoformat()
+        ttl = int(time.time()) + EARNINGS_NOTIFICATIONS_TTL_SECONDS
+        for symbol in symbols:
+            try:
+                self._earnings_notifications.put_item(
+                    Item={
+                        "chat_id": chat_id,
+                        "notify_key": f"{symbol}#{earning_date}",
+                        "symbol": symbol,
+                        "earning_date": earning_date,
+                        "sent_at": sent_at,
+                        "ttl": ttl,
+                    },
+                    ConditionExpression="attribute_not_exists(notify_key)",
+                )
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    raise
+
+    def get_company_summary(self, symbol: str, earning_date: str) -> str | None:
+        resp = self._company_summaries.get_item(
+            Key={"symbol": symbol, "earning_date": earning_date}
+        )
+        item = resp.get("Item")
+        return item["summary"] if item else None
+
+    def upsert_company_summary(
+        self, symbol: str, earning_date: str, summary: str
+    ) -> None:
+        self._company_summaries.put_item(
+            Item={
+                "symbol": symbol,
+                "earning_date": earning_date,
+                "summary": summary,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "ttl": int(time.time()) + COMPANY_SUMMARIES_TTL_SECONDS,
+            }
+        )
