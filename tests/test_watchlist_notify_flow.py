@@ -2,28 +2,21 @@
 /subscribe -> /watch -> sync_earnings() -> notify.
 
 Drives the real command routing (processor_handler._process_update) and the
-real scheduler entry points (sync_earnings / handler); only the outer edges
-(Finnhub HTTP, Groq, Telegram) are mocked. Assertions read directly from the
-tmp SQLite store to confirm the full chain actually persisted data.
+real scheduler entry points (sync_earnings / _run, the notify step used by
+`handler()`); only the outer edges (Finnhub HTTP, Groq, Telegram) are mocked.
+Assertions read directly from the tmp SQLite store to confirm the full chain
+actually persisted data.
 """
 
 from __future__ import annotations
 
 import sqlite3
 from datetime import date, timedelta
-from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from agent import processor_handler, scheduler_handler
 from agent.db.watchlist import DEFAULT_WATCHLIST, remove_from_watchlist
 from agent.tools import _http as tools_http
-
-CTX = SimpleNamespace(
-    function_name="test-watchlist-notify-flow",
-    memory_limit_in_mb=128,
-    invoked_function_arn="arn:aws:lambda:test",
-    aws_request_id="req-1",
-)
 
 TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 
@@ -111,7 +104,7 @@ def test_full_chain_subscribe_watch_sync_notify(local_store, monkeypatch):
             "SELECT symbol, earning_date FROM earnings_calendar WHERE symbol = ?", ("PLTR",)
         ).fetchall() == [("PLTR", TOMORROW)]
 
-    assert scheduler_handler.handler({}, CTX) == {"statusCode": 200}
+    scheduler_handler._run()
 
     assert fake_send.call_count == 1
     call = fake_send.call_args_list[0]
@@ -136,11 +129,11 @@ def test_notify_rerun_is_idempotent(local_store, monkeypatch):
     fake_finnhub.register("PLTR", [_row("PLTR", TOMORROW)])
     scheduler_handler.sync_earnings()
 
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
     assert fake_send.call_count == 1
     assert fake_run_agent.call_count == 1
 
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
     assert fake_send.call_count == 1
     assert fake_run_agent.call_count == 1
 
@@ -166,7 +159,7 @@ def test_per_subscriber_gets_only_own_watched_symbols(local_store, monkeypatch):
     fake_finnhub.register("NVDA", [_row("NVDA", TOMORROW)])
 
     scheduler_handler.sync_earnings()
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     assert fake_send.call_count == 2
     bodies = {call.args[0]: call.args[1] for call in fake_send.call_args_list}
@@ -183,7 +176,7 @@ def test_unsubscribed_user_not_notified(local_store, monkeypatch):
     fake_finnhub.register("AAPL", [_row("AAPL", TOMORROW)])
 
     assert scheduler_handler.sync_earnings() == []
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     fake_run_agent.assert_not_called()
     fake_send.assert_not_called()
@@ -197,7 +190,7 @@ def test_no_earnings_tomorrow_no_push(local_store, monkeypatch):
     # No symbol registered with fake_finnhub -> everything comes back empty.
 
     scheduler_handler.sync_earnings()
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     fake_run_agent.assert_not_called()
     fake_send.assert_not_called()

@@ -24,6 +24,7 @@ Globals:
         EARNINGS_CALENDAR_TABLE: !Ref EarningsCalendarTable
         EARNINGS_NOTIFICATIONS_TABLE: !Ref EarningsNotificationsTable
         COMPANY_SUMMARIES_TABLE: !Ref CompanySummariesTable
+        NEWS_TABLE: !Ref NewsTable
         UPDATES_QUEUE_URL: !Ref UpdatesQueue
         POWERTOOLS_SERVICE_NAME: !Ref AppName
         LOG_LEVEL: INFO
@@ -294,6 +295,8 @@ Resources:
             TableName: !Ref EarningsNotificationsTable
         - DynamoDBCrudPolicy:
             TableName: !Ref CompanySummariesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref NewsTable
         - Statement:
             - Effect: Allow
               Action: ssm:GetParameters

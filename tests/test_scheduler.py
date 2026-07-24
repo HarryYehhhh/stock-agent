@@ -1,4 +1,4 @@
-"""Scheduler handler tests: dynamodb global watchlist push, local per-subscriber push."""
+"""Scheduler handler tests: dynamodb full-pipeline handler, local notify flow."""
 
 from __future__ import annotations
 
@@ -23,101 +23,48 @@ CTX = _Ctx()
 TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 
 
+# ---------------------------------------------------------------------------
+# handler(): cloud (dynamodb) full pipeline — sync → notify → market summary
+# ---------------------------------------------------------------------------
+
+
 @pytest.fixture
-def mocks(monkeypatch):
+def pipeline_mocks(monkeypatch):
     monkeypatch.setenv("STORAGE_BACKEND", "dynamodb")
+    fake_sync = MagicMock(return_value=[])
+    fake_run = MagicMock()
+    fake_push = MagicMock()
 
-    fake_get_earnings = MagicMock()
-    fake_get_subs = MagicMock()
-    fake_run_agent = MagicMock(return_value="summary text")
-    fake_send = MagicMock()
+    monkeypatch.setattr(scheduler_handler, "sync_earnings", fake_sync)
+    monkeypatch.setattr(scheduler_handler, "_run", fake_run)
+    monkeypatch.setattr(scheduler_handler, "push_daily_summary", fake_push)
 
-    monkeypatch.setattr(
-        scheduler_handler,
-        "get_watchlist",
-        lambda: [
-            {"symbol": "AAPL"},
-            {"symbol": "NVDA"},
-            {"symbol": "QQQ"},
-        ],
-    )
-    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_get_earnings)
-    monkeypatch.setattr(scheduler_handler, "get_all_active", fake_get_subs)
-    monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
-    monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
-
-    return {
-        "earnings": fake_get_earnings,
-        "subs": fake_get_subs,
-        "agent": fake_run_agent,
-        "send": fake_send,
-    }
+    return {"sync": fake_sync, "run": fake_run, "push": fake_push}
 
 
-def test_skips_when_watchlist_has_no_earnings(mocks):
-    mocks["earnings"].return_value = []
-    assert scheduler_handler.handler({}, CTX) == {"statusCode": 200}
-    assert [call.kwargs["symbol"] for call in mocks["earnings"].call_args_list] == [
-        "AAPL",
-        "NVDA",
-        "QQQ",
-    ]
-    mocks["agent"].assert_not_called()
-    mocks["send"].assert_not_called()
+def test_handler_runs_all_three_stages_and_returns_200(pipeline_mocks):
+    result = scheduler_handler.handler({}, CTX)
+
+    assert result == {"statusCode": 200}
+    pipeline_mocks["sync"].assert_called_once()
+    pipeline_mocks["run"].assert_called_once()
+    pipeline_mocks["push"].assert_called_once()
 
 
-def test_pushes_only_watchlist_symbols_with_earnings(mocks):
-    def earnings(_date_from, _date_to, symbol):
-        if symbol == "AAPL":
-            return [{"symbol": "AAPL", "hour": "amc"}]
-        if symbol == "NVDA":
-            return [{"symbol": "NVDA", "hour": "bmo"}]
-        return []
+def test_handler_stage_failure_does_not_block_other_stages_but_raises(pipeline_mocks):
+    pipeline_mocks["run"].side_effect = RuntimeError("notify boom")
 
-    mocks["earnings"].side_effect = earnings
-    mocks["subs"].return_value = [111, 222]
+    with pytest.raises(Exception):
+        scheduler_handler.handler({}, CTX)
 
-    scheduler_handler.handler({}, CTX)
-
-    prompt = mocks["agent"].call_args.args[0]
-    assert "AAPL" in prompt
-    assert "NVDA" in prompt
-    assert "QQQ" not in prompt
-    assert "固定追蹤清單" in prompt
-    assert "不要自行挑選或省略" in prompt
-    assert "5-10" not in prompt
-
-    assert mocks["send"].call_count == 2
+    pipeline_mocks["sync"].assert_called_once()
+    pipeline_mocks["run"].assert_called_once()
+    pipeline_mocks["push"].assert_called_once()
 
 
-def test_skips_when_no_subscribers(mocks):
-    def earnings(_date_from, _date_to, symbol):
-        return [{"symbol": symbol}]
-
-    mocks["earnings"].side_effect = earnings
-    mocks["subs"].return_value = []
-
-    scheduler_handler.handler({}, CTX)
-
-    mocks["agent"].assert_not_called()
-    mocks["send"].assert_not_called()
-
-
-def test_symbol_lookup_failure_does_not_stop_other_watchlist_symbols(mocks):
-    def earnings(_date_from, _date_to, symbol):
-        if symbol == "AAPL":
-            raise RuntimeError("boom")
-        if symbol == "NVDA":
-            return [{"symbol": "NVDA"}]
-        return []
-
-    mocks["earnings"].side_effect = earnings
-    mocks["subs"].return_value = [111]
-    scheduler_handler.handler({}, CTX)
-
-    prompt = mocks["agent"].call_args.args[0]
-    assert "NVDA" in prompt
-    assert "AAPL" not in prompt
+def test_notify_live_removed():
+    """Regression: `_notify_live` (ADR-0006 §2) no longer exists."""
+    assert not hasattr(scheduler_handler, "_notify_live")
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +136,7 @@ def test_sync_earnings_collects_failures(local_mocks, monkeypatch):
 def test_local_notify_reads_sqlite_only_and_is_idempotent(local_mocks):
     _seed_earnings(["AAPL"])
 
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     prompt = local_mocks["agent"].call_args.args[0]
     assert "AAPL" in prompt
@@ -200,7 +147,7 @@ def test_local_notify_reads_sqlite_only_and_is_idempotent(local_mocks):
     assert local_mocks["send"].call_count == 1
 
     # Rerun: already notified, no duplicate push and no extra Groq call.
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
     assert local_mocks["send"].call_count == 1
     assert local_mocks["agent"].call_count == 1
 
@@ -213,7 +160,7 @@ def test_local_company_summary_cached_across_subscribers(local_mocks, local_stor
     add_to_watchlist("222", "AAPL")
     _seed_earnings(["AAPL"])
 
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     # Two subscribers pushed, but the AAPL summary was generated only once.
     assert local_mocks["send"].call_count == 2
@@ -233,7 +180,7 @@ def test_local_warns_when_cache_is_stale(local_mocks, local_store):
             "UPDATE earnings_calendar SET updated_at = '2020-01-01T00:00:00+00:00'"
         )
 
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     body = local_mocks["send"].call_args.args[1]
     assert "⚠️" in body
@@ -242,7 +189,7 @@ def test_local_warns_when_cache_is_stale(local_mocks, local_store):
 
 
 def test_local_skips_when_no_cached_earnings(local_mocks):
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     local_mocks["agent"].assert_not_called()
     local_mocks["send"].assert_not_called()
@@ -252,7 +199,7 @@ def test_local_summary_failure_falls_back_and_retries_next_run(local_mocks, loca
     _seed_earnings(["AAPL"])
     local_mocks["agent"].side_effect = RuntimeError("groq down")
 
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     body = local_mocks["send"].call_args.args[1]
     assert "摘要生成失敗" in body
@@ -266,12 +213,12 @@ def test_local_send_failure_allows_retry_and_reuses_cached_summary(local_mocks):
     _seed_earnings(["AAPL"])
     local_mocks["send"].side_effect = RuntimeError("telegram down")
 
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
     assert local_mocks["send"].call_count == 1
 
     # Next run retries the failed chat from the cached summary (no new Groq call).
     local_mocks["send"].side_effect = None
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
     assert local_mocks["send"].call_count == 2
     assert local_mocks["agent"].call_count == 1
 
@@ -289,7 +236,7 @@ def test_local_per_subscriber_push_only_own_symbols(local_mocks):
 
     local_mocks["agent"].side_effect = summary_for
 
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     assert local_mocks["send"].call_count == 2
     bodies = {call.args[0]: call.args[1] for call in local_mocks["send"].call_args_list}
@@ -304,7 +251,7 @@ def test_local_inactive_subscriber_is_excluded_from_push(local_mocks):
     unsubscribe("111")
     _seed_earnings(["AAPL"])
 
-    scheduler_handler.handler({}, CTX)
+    scheduler_handler._run()
 
     local_mocks["agent"].assert_not_called()
     local_mocks["send"].assert_not_called()

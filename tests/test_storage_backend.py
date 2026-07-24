@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from tests.conftest import clear_db_caches
+from tests.conftest import NEWS, clear_db_caches
 
 
 def test_defaults_to_local_outside_lambda(monkeypatch):
@@ -269,3 +269,122 @@ def test_insert_news_reinserting_existing_headlines_returns_zero(local_store):
         ).fetchone()
 
     assert total == distinct == 2
+
+
+# ---------------------------------------------------------------------------
+# DynamoDBBackend: insert_news / list_news_since / insert_market_summary
+# ---------------------------------------------------------------------------
+
+_NEWS_ITEMS = [
+    {
+        "category": "general",
+        "symbol": "AAPL",
+        "headline": "Apple beats estimates",
+        "summary": "...",
+        "url": "https://example.com/1",
+        "published_at": "2026-07-23T00:00:00Z",
+    },
+    {
+        "category": "general",
+        "symbol": "AAPL",
+        "headline": "Apple beats estimates",  # duplicate headline within same batch
+        "summary": "...",
+        "url": "https://example.com/1-dup",
+        "published_at": "2026-07-23T00:00:00Z",
+    },
+    {
+        "category": "general",
+        "symbol": "NVDA",
+        "headline": "Nvidia ships new chip",
+        "summary": "...",
+        "url": "https://example.com/2",
+        "published_at": "2026-07-23T00:00:00Z",
+    },
+]
+
+
+def test_dynamodb_insert_news_returns_distinct_inserted_count_not_attempted_count(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    inserted = backend.insert_news(_NEWS_ITEMS)
+
+    assert inserted == 2  # only 2 distinct headlines actually inserted
+
+    table = aws["ddb"].Table(NEWS)
+    items = table.scan()["Items"]
+    headlines = [item["headline"] for item in items]
+    assert len(items) == len(set(headlines)) == 2
+
+
+def test_dynamodb_insert_news_reinserting_existing_headlines_returns_zero(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.insert_news(_NEWS_ITEMS)
+
+    inserted_again = backend.insert_news(_NEWS_ITEMS)
+
+    assert inserted_again == 0
+    table = aws["ddb"].Table(NEWS)
+    assert len(table.scan()["Items"]) == 2
+
+
+def test_dynamodb_list_news_since_filters_orders_and_shapes_rows(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.insert_news(
+        [
+            {
+                "category": "ai",
+                "symbol": None,
+                "headline": "Too old to include",
+                "summary": "old",
+                "url": None,
+                "published_at": "2026-07-01T00:00:00Z",
+            },
+            {
+                "category": "big7",
+                "symbol": "AAPL",
+                "headline": "Newer AAPL story",
+                "summary": "s2",
+                "url": "https://example.com/new",
+                "published_at": "2026-07-23T12:00:00Z",
+            },
+            {
+                "category": "big7",
+                "symbol": "AAPL",
+                "headline": "Older AAPL story",
+                "summary": "s1",
+                "url": "https://example.com/old",
+                "published_at": "2026-07-23T00:00:00Z",
+            },
+        ]
+    )
+
+    rows = backend.list_news_since("2026-07-23T00:00:00Z")
+
+    assert [row["headline"] for row in rows] == [
+        "Newer AAPL story",
+        "Older AAPL story",
+    ]  # too-old row excluded; newest first
+    row = rows[0]
+    assert row["id"] == row["headline"] == "Newer AAPL story"
+    assert row["category"] == "big7"
+    assert row["symbol"] == "AAPL"
+    assert row["summary"] == "s2"
+    assert row["url"] == "https://example.com/new"
+    assert row["published_at"] == "2026-07-23T12:00:00Z"
+
+
+def test_dynamodb_insert_market_summary_is_a_noop(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+
+    result = backend.insert_market_summary("some summary", ["headline-a", "headline-b"])
+
+    assert result is None
+    table = aws["ddb"].Table(NEWS)
+    assert table.scan()["Items"] == []  # nothing persisted anywhere
