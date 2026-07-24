@@ -131,9 +131,9 @@ def test_processor_subscribe_and_scheduler_share_local_store(local_store, monkey
 
 
 def test_rest_watchlist_returns_user_watchlist(local_store):
-    get_backend().add_to_watchlist("111", "AAPL", exchange="NASDAQGS")
-    get_backend().add_to_watchlist("111", "NVDA", exchange="NASDAQGS")
-    get_backend().add_to_watchlist("222", "TSM", exchange="NYSE")
+    get_backend().add_to_watchlist("111", "AAPL")
+    get_backend().add_to_watchlist("111", "NVDA")
+    get_backend().add_to_watchlist("222", "TSM")
 
     response = TestClient(app).get("/watchlist/111")
 
@@ -142,16 +142,16 @@ def test_rest_watchlist_returns_user_watchlist(local_store):
         "chat_id": "111",
         "count": 2,
         "watchlist": [
-            {"symbol": "AAPL", "exchange": "NASDAQGS"},
-            {"symbol": "NVDA", "exchange": "NASDAQGS"},
+            {"symbol": "AAPL"},
+            {"symbol": "NVDA"},
         ],
     }
 
 
 def test_rest_watchlist_earnings_scoped_to_chat_and_window(local_store):
     backend = get_backend()
-    backend.add_to_watchlist("111", "AAPL", exchange="NASDAQGS")
-    backend.add_to_watchlist("222", "NVDA", exchange="NASDAQGS")
+    backend.add_to_watchlist("111", "AAPL")
+    backend.add_to_watchlist("222", "NVDA")
 
     in_window = (date.today() + timedelta(days=3)).isoformat()
     out_of_window = (date.today() + timedelta(days=60)).isoformat()

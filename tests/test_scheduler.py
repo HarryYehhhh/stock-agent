@@ -36,9 +36,9 @@ def mocks(monkeypatch):
         scheduler_handler,
         "get_watchlist",
         lambda: [
-            {"exchange": "NASDAQGS", "symbol": "AAPL"},
-            {"exchange": "NASDAQGS", "symbol": "NVDA"},
-            {"exchange": "NASDAQGM", "symbol": "QQQ"},
+            {"symbol": "AAPL"},
+            {"symbol": "NVDA"},
+            {"symbol": "QQQ"},
         ],
     )
     monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_get_earnings)
@@ -83,7 +83,6 @@ def test_pushes_only_watchlist_symbols_with_earnings(mocks):
     assert "AAPL" in prompt
     assert "NVDA" in prompt
     assert "QQQ" not in prompt
-    assert "NASDAQGS" in prompt
     assert "固定追蹤清單" in prompt
     assert "不要自行挑選或省略" in prompt
     assert "5-10" not in prompt

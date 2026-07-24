@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-24 — remove-watchlist-exchange — evaluator — ✅ Pass
+- 連結：docs/qa-reports/remove-watchlist-exchange.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 131 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 143 passed, 0 failed；🔴 0、🟡 0（🟢 2：DROP COLUMN migration 依賴 SQLite ≥3.35、歷史 docs 仍留 exchange 字樣但使用者已明確排除範圍）；循環次數 1；未解 P0/P1 0。驗收範圍：`db/watchlist.py`（DEFAULT_WATCHLIST 28 筆只留 symbol）、`db/backend.py`（Protocol/Local/DynamoDB 三處 `add_to_watchlist` 拿掉 exchange 參數、watchlist CREATE TABLE 移除 exchange 欄、新增 `PRAGMA table_info` 偵測 + `ALTER TABLE DROP COLUMN` migration、`_migrate_watchlist_schema` 與六個查詢方法全數移除 exchange）、`scheduler_handler.py`（兩個 prompt template、`_company_summary`、`_notify_live` 移除 exchange）、`processor_handler.py`（`/watchlist` 只顯示 symbol）；grep 覆核 `exchange`/`NASDAQ`/`NYSE` 僅剩 migration 程式碼本身與模擬舊 schema 的測試 fixture，均合理保留非殘留；新增 `test_migration_drops_exchange_column_from_existing_per_subscriber_db` 用 `PRAGMA table_info` 斷言精準覆蓋 DROP COLUMN migration 行為；改動手術式，working tree 內其餘既有未提交檔案（Makefile/local_server.py/market_summary.py 等）核對均屬其他 phase 既有工作、本次未觸碰。
+
 ## 2026-07-24 — fix-launchd-env-loading — evaluator — ✅ Pass
 - 連結：docs/qa-reports/fix-launchd-env-loading.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -q` 沙盒內 130 passed/12 errors（既有 `test_local_integration.py` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 142 passed, 0 failed；🔴 0、🟡 0（🟢 3：`set -e` 力度與腳本複雜度相稱、錯誤訊息路徑為字面字串已在已知限制揭露、plist 路徑寫死屬既有 Phase 1 設計不擴大）；循環次數 1；未解 P0/P1 0。驗收範圍：新增 `scripts/run-daily.sh`（cd → `.env` 存在檢查 exit 1 → `set -a; source .env; set +a` → 三個 make target 用 `&&` 串接）修復 launchd 不 source shell profile 導致 `.env` 變數未載入、`config.py` KeyError 的 bug；`bash -n`、`plutil -lint`、`env -i` 模擬 launchd 最小環境（複製腳本、末行改 `make -n` + echo 三把 key，不打真實 API）驗證三把 key 皆載入且三步 make 組成正確、exit 0；另模擬 `.env` 缺失情境驗證 exit 1、不執行任何 make target；plist `ProgramArguments` 改為呼叫該 script，其餘欄位（WorkingDirectory/PATH/log 路徑/StartCalendarInterval/RunAtLoad）逐項比對前次 QA report 記載值皆未變動；`docs/local-daily-schedule.md` 已安裝者 unload/load 提醒位置醒目、指令與既有安裝步驟一致；改動範圍手術式，working tree 內其餘未提交檔案（Makefile/market_summary.py 等）核對均屬其他 phase 既有工作、本次未觸碰。
@@ -34,7 +38,6 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 ## 2026-07-23 — phase0-webhook-switch — evaluator — ✅ Pass
 - 連結：docs/qa-reports/phase0-webhook-switch.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -q` 沙盒內 123 passed/12 errors（既有 socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 135 passed, 0 failed；🔴 0、🟡 0（🟢 2：不對稱行為說明、文件風格一致性，皆不要求修改）；循環次數 1；未解 P0/P1 0。驗收範圍：Makefile 新增 `set-webhook-local`/`delete-webhook`（`.PHONY` 更新、缺參數報錯風格與既有 `set-webhook` 一致、`set-webhook` 未被改動、URL 拼接 `<WEBHOOK_URL>/webhook`、`secret_token` 帶出，dry-run + 缺參數情境皆實測驗證）、`docs/deployment-flow.md` 新增本地開發 webhook 切換小節（步驟與 Makefile 指令逐字一致，另查核「本地 webhook_handler 會驗證 secret」之描述屬實）。
-
 ## 2026-07-23 — watchlist-notify-flow-verification（T3 流程 A）— evaluator — ✅ Pass
 - 連結：docs/qa-reports/manual-test-watchlist-notify.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -q` 基準 124 → 最終 129 passed（sandbox 擋既有 `finnhub_stub` 12 個 socket 測試，已用 `dangerouslyDisableSandbox` 重跑）；新增 `tests/test_watchlist_notify_flow.py` 5 案例對應 spec 全部 7 條 acceptance criteria，全鏈路驅動 `_process_update → sync_earnings → handler(_notify_local)`，僅打樁 Finnhub/Groq/Telegram 三個外部邊界；冪等斷言已用 mutation test（拿掉 `mark_notified`）驗證有效；🔴 0、🟡 0（🟢 2：一處恆真斷言、建議合併 T1/T2 分支避免基準漂移）；循環次數 1；未解 P0/P1 0；本任務為 agent 自動化整合驗證，非人工手動互動；`src/` 無改動，未發現既有真 bug

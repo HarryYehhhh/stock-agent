@@ -76,11 +76,7 @@ def _process_update(body: dict) -> None:
                 chat_id, f"目前沒有追蹤任何股票。{WATCH_USAGE}"
             )
         else:
-            lines = [
-                f"• {item['symbol']}"
-                + (f"（{item['exchange']}）" if item.get("exchange") else "")
-                for item in items
-            ]
+            lines = [f"• {item['symbol']}" for item in items]
             send_message(chat_id, "📋 您的追蹤清單：\n" + "\n".join(lines))
         return
 
