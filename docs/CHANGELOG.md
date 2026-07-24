@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-24 — sync-local-to-dynamodb — evaluator — ✅ Pass
+- 連結：docs/qa-reports/sync-local-to-dynamodb.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 146 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 158 passed, 0 failed；🔴 0、🟡 1（ADR-0004 §9 記載 upload_local_store 不搬 earnings_calendar/company_summaries，本次依使用者新指示推翻，ADR 文件未同步更新註記，屬文件與現況不一致但不阻塞）；🟢 2；循環次數 1；未解 P0/P1 0。無正式 contract，對照使用者需求驗收：`NewsTable`（PK=headline 去重、GSI published-at-index 支援近期查詢、TTL）+ SchedulerFunction 補 `State: DISABLED`（未動 IAM）+ `upload_local_store.py` 擴充 earnings_calendar/company_summaries/news（Decimal 轉換與既有 DynamoDBBackend 手法一致、TTL 對齊 backend.py 常數、nullable 欄位省略寫入、冪等由 put_item overwrite-by-key 保證且有專屬測試驗證）+ `sync-dynamodb` make target 串接 run-daily.sh 第四步（風格與既有三步一致）+ moto 測試新增 test-news 表與冪等測試；排除項（market_summaries 不同步、DynamoDBBackend 不新增 news 讀取方法、不執行 make deploy）皆核實遵守；範圍手術式，僅 9 個檔案改動且逐一對應需求。
+
 ## 2026-07-24 — dynamodb-backend-pr1-sprint（follow-up：補日期區間邊界測試）— evaluator — ✅ Pass
 - 連結：docs/qa-reports/dynamodb-backend-pr1-sprint.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 145 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 157 passed, 0 failed；只補 `tests/test_dynamodb_backend.py` 新增 `test_dynamodb_watchlist_earnings_date_range_boundaries`，`src/` 零改動；🔴 0、🟡 0（解掉前次 🟡：`get_chat_watchlist_earnings` 缺日期區間過濾邊界測試）；循環次數 1；未解 P0/P1 0。

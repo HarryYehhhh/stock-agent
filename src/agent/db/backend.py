@@ -32,6 +32,7 @@ DEDUP_TTL_SECONDS = 3600
 EARNINGS_CALENDAR_TTL_SECONDS = 45 * 24 * 3600
 EARNINGS_NOTIFICATIONS_TTL_SECONDS = 30 * 24 * 3600
 COMPANY_SUMMARIES_TTL_SECONDS = 30 * 24 * 3600
+NEWS_TTL_SECONDS = 14 * 24 * 3600
 DEFAULT_LOCAL_STORE_PATH = ".local/earnings-agent.sqlite3"
 
 
@@ -689,11 +690,46 @@ class LocalSQLiteBackend:
                     """
                 ).fetchall()
             ]
+            earnings_calendar = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT symbol, earning_date, extended_hour, eps_estimate,
+                           revenue_estimate, updated_at
+                    FROM earnings_calendar
+                    ORDER BY symbol, earning_date
+                    """
+                ).fetchall()
+            ]
+            company_summaries = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT symbol, earning_date, summary, created_at
+                    FROM company_summaries
+                    ORDER BY symbol, earning_date
+                    """
+                ).fetchall()
+            ]
+            news = [
+                dict(row)
+                for row in conn.execute(
+                    """
+                    SELECT id, category, symbol, headline, summary, url,
+                           published_at, fetched_at
+                    FROM news
+                    ORDER BY id ASC
+                    """
+                ).fetchall()
+            ]
         return {
             "conversations": conversations,
             "subscribers": subscribers,
             "dedup": dedup,
             "watchlist": watchlist,
+            "earnings_calendar": earnings_calendar,
+            "company_summaries": company_summaries,
+            "news": news,
         }
 
 
