@@ -22,6 +22,7 @@ WATCHLIST = "test-watchlist"
 EARNINGS_CALENDAR = "test-earnings-calendar"
 EARNINGS_NOTIFICATIONS = "test-earnings-notifications"
 COMPANY_SUMMARIES = "test-company-summaries"
+NEWS = "test-news"
 QUEUE_NAME = "test-updates"
 
 
@@ -38,6 +39,7 @@ def env(monkeypatch):
     monkeypatch.setenv("EARNINGS_CALENDAR_TABLE", EARNINGS_CALENDAR)
     monkeypatch.setenv("EARNINGS_NOTIFICATIONS_TABLE", EARNINGS_NOTIFICATIONS)
     monkeypatch.setenv("COMPANY_SUMMARIES_TABLE", COMPANY_SUMMARIES)
+    monkeypatch.setenv("NEWS_TABLE", NEWS)
     monkeypatch.setenv("FINNHUB_API_KEY", "fake-finnhub")
     monkeypatch.setenv("GROQ_API_KEY", "fake-groq")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot")
@@ -137,6 +139,26 @@ def aws():
             AttributeDefinitions=[
                 {"AttributeName": "symbol", "AttributeType": "S"},
                 {"AttributeName": "earning_date", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName=NEWS,
+            KeySchema=[{"AttributeName": "headline", "KeyType": "HASH"}],
+            AttributeDefinitions=[
+                {"AttributeName": "headline", "AttributeType": "S"},
+                {"AttributeName": "bucket", "AttributeType": "S"},
+                {"AttributeName": "published_at", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "published-at-index",
+                    "KeySchema": [
+                        {"AttributeName": "bucket", "KeyType": "HASH"},
+                        {"AttributeName": "published_at", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
             ],
             BillingMode="PAY_PER_REQUEST",
         )

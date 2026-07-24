@@ -44,6 +44,8 @@ PR-1 不改 `scheduler_handler.py`，`_notify_live()` 仍呼叫 `get_watchlist()
 ### 9. upload_local_store 只搬 watchlist
 `db/upload_local_store.py` 新增上傳 `watchlist`（真實使用者資料，cutover 後 production 需即用），**不上傳** earnings_calendar / earnings_notifications / company_summaries（暫存快取，sync cron 重建）。
 
+> **Update（2026-07-24，feat/sync-local-to-dynamodb）**：使用者定案資料流為「每天 Finnhub → SQLite → 同步 DynamoDB（含新聞與財報）」，本節部分推翻：`upload_local_store` 現在**也上傳** earnings_calendar / company_summaries / news（news 表為此新增，見 QA report `sync-local-to-dynamodb.md`）。earnings_notifications 維持不上傳；market_summaries 維持 local-only。
+
 ## Consequences
 正面：
 - Production 取得與 local 相同的 DB-first 能力，PR-2 可直接用同一組 backend 方法跑 sync/notify，無 backend 專屬分支。

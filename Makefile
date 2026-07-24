@@ -1,4 +1,4 @@
-.PHONY: install test lint dev notify-earnings sync-earnings daily-summary build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
+.PHONY: install test lint dev notify-earnings sync-earnings daily-summary sync-dynamodb build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
 
 REGION ?= ap-northeast-1
 STACK ?= earnings-agent
@@ -25,6 +25,9 @@ sync-earnings:
 
 daily-summary:
 	PYTHONPATH=src uv run python -m agent.market_summary
+
+sync-dynamodb:
+	PYTHONPATH=src uv run python -m agent.db.upload_local_store --write
 
 build:
 	cd infra && sam build
