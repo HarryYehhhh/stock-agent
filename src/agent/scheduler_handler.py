@@ -1,18 +1,21 @@
-"""EventBridge Scheduler Lambda: daily push of tomorrow's earnings to subscribers.
+"""EventBridge Scheduler Lambda: daily earnings sync + notify + market summary.
 
-Runs once per day at 00:00 UTC (08:00 Asia/Taipei).
+Cloud (`STORAGE_BACKEND=dynamodb`) runs the full daily pipeline in a single
+Lambda invocation via `handler()`: sync earnings → notify tomorrow's watchlist
+earnings → push the daily market summary. All three stages read/write
+DynamoDB (ADR-0006).
 
-Local backend splits the flow in two steps:
-- sync (cron: `python -m agent.scheduler_handler sync` / `make sync-earnings`):
+Local (launchd) splits the same pipeline across separate cron jobs/make
+targets instead of a single invocation:
+- sync (`python -m agent.scheduler_handler sync` / `make sync-earnings`):
   refresh upcoming earnings for all active subscribers' watchlist symbols into
   the sqlite earnings_calendar cache.
-- notify: read tomorrow's earnings from sqlite only (warns when the cache looks
-  stale), generate one Groq summary per reporting company cached in
-  company_summaries, then compose each subscriber's push from those cached
-  blocks — Groq is called at most once per company, not once per subscriber.
-
-DynamoDB backend keeps the original live-fetch flow against the global
-DEFAULT_WATCHLIST.
+- notify (`python -m agent.scheduler_handler` / `make notify-earnings`): read
+  tomorrow's earnings from sqlite only (warns when the cache looks stale),
+  generate one Groq summary per reporting company cached in company_summaries,
+  then compose each subscriber's push from those cached blocks — Groq is
+  called at most once per company, not once per subscriber.
+- daily summary (`make daily-summary`): see `agent.market_summary`.
 """
 
 from __future__ import annotations
@@ -22,9 +25,8 @@ from datetime import date, datetime, timedelta, timezone
 from aws_lambda_powertools import Logger
 
 from agent.agent import run_agent
-from agent.db.backend import get_backend, selected_backend_name
-from agent.db.subscribers import get_all_active
-from agent.db.watchlist import get_watchlist
+from agent.db.backend import get_backend
+from agent.market_summary import push_daily_summary
 from agent.telegram_client import send_message
 from agent.tools.earnings import get_earnings_calendar
 
@@ -32,13 +34,6 @@ logger = Logger()
 
 SYNC_DAYS = 30
 MAX_DATA_AGE_HOURS = 24
-
-PROMPT_TEMPLATE = (
-    "明天（{tomorrow}）有以下固定追蹤清單公司公布財報：{earnings}\n\n"
-    "請用繁體中文條列每家公司的：股票代號、財報時間（盤前/盤後）、"
-    "分析師 EPS 預期、營收預期，並在最後附上 1-2 句整體市場注意事項。"
-    "請列出上方傳入的每家公司，不要自行挑選或省略。"
-)
 
 COMPANY_PROMPT_TEMPLATE = (
     "明天（{tomorrow}）{symbol}將公布財報，快取資料：{row}\n\n"
@@ -157,47 +152,42 @@ def _notify_local(tomorrow: str) -> None:
         backend.mark_notified(chat_id, pending_symbols, tomorrow)
 
 
-def _notify_live(tomorrow: str) -> None:
-    earnings = []
-    for item in get_watchlist():
-        symbol = item["symbol"]
-        try:
-            rows = get_earnings_calendar(tomorrow, tomorrow, symbol=symbol)
-        except Exception:
-            logger.exception("earnings lookup failed for %s", symbol)
-            continue
-        earnings.extend(rows)
-
-    if not earnings:
-        logger.info("no watchlist earnings tomorrow, skip push")
-        return
-
-    subscribers = get_all_active()
-    if not subscribers:
-        logger.info("no active subscribers, skip push")
-        return
-
-    summary = run_agent(PROMPT_TEMPLATE.format(tomorrow=tomorrow, earnings=earnings), [])
-    body = f"📊 *明日追蹤清單財報提醒（{tomorrow}）*\n\n{summary}"
-
-    for chat_id in subscribers:
-        try:
-            send_message(chat_id, body)
-        except Exception:
-            logger.exception("failed to push to %s", chat_id)
-
-
 def _run() -> None:
     tomorrow = (date.today() + timedelta(days=1)).isoformat()
-    if selected_backend_name() == "local":
-        _notify_local(tomorrow)
-    else:
-        _notify_live(tomorrow)
+    _notify_local(tomorrow)
 
 
 @logger.inject_lambda_context
 def handler(event: dict, context) -> dict:
-    _run()
+    """Cloud daily pipeline entry point: sync → notify → market summary.
+
+    Each stage is independently try/except'd so one stage's failure doesn't
+    block the others (e.g. a summary failure shouldn't swallow earnings
+    notifications already sent). If any stage failed, re-raise after all
+    stages have run so the invocation counts toward Lambda's `Errors` metric.
+    """
+    failed = False
+
+    try:
+        sync_earnings()
+    except Exception:
+        logger.exception("sync_earnings stage failed")
+        failed = True
+
+    try:
+        _run()
+    except Exception:
+        logger.exception("notify stage failed")
+        failed = True
+
+    try:
+        push_daily_summary()
+    except Exception:
+        logger.exception("push_daily_summary stage failed")
+        failed = True
+
+    if failed:
+        raise RuntimeError("scheduler pipeline had at least one failed stage")
     return {"statusCode": 200}
 
 

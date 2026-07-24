@@ -229,3 +229,30 @@ def test_push_daily_summary_send_failure_does_not_stop_other_subscribers(push_mo
     ms.push_daily_summary()
 
     assert push_mocks["send"].call_count == 2
+
+
+def test_push_daily_summary_end_to_end_on_dynamodb_backend(
+    aws, mock_finnhub, mock_groq, mock_quotes, monkeypatch
+):
+    """Same flow as `push_mocks`, but against DynamoDBBackend (ADR-0006):
+    news written to NewsTable, read back via list_news_since, summarized,
+    and pushed — proving push_daily_summary/generate_market_summary/
+    select_news/refresh_news work unmodified on the dynamodb backend too."""
+    from agent.db.backend import get_backend
+    from agent.db.subscribers import subscribe
+
+    mock_groq.chat.completions.create.return_value = _text_response(
+        "*📊 Big 7 動態* 摘要內容"
+    )
+    fake_send = MagicMock()
+    monkeypatch.setattr(ms, "send_message", fake_send)
+    subscribe("111")
+
+    ms.push_daily_summary()
+
+    assert fake_send.call_count == 1
+    assert "*📊 Big 7 動態* 摘要內容" in fake_send.call_args.args[1]
+
+    stored = get_backend().list_news_since("2000-01-01T00:00:00+00:00")
+    assert len(stored) > 0
+    assert all(row["id"] == row["headline"] for row in stored)

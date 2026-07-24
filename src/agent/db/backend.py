@@ -22,6 +22,7 @@ from agent.config import (
     conversations_table,
     earnings_calendar_table,
     earnings_notifications_table,
+    news_table,
     processed_updates_table,
     subscribers_table,
     watchlist_table,
@@ -52,14 +53,16 @@ def local_store_path() -> Path:
 
 class StorageBackend(Protocol):
     """Cross-backend storage interface (conversations / subscribers / dedup /
-    watchlist / earnings cache / notification idempotency / company summaries).
+    watchlist / earnings cache / notification idempotency / company summaries /
+    news / market summary persistence).
 
     These methods are implemented by both `LocalSQLiteBackend` and
     `DynamoDBBackend` (ADR-0003 established the Protocol; ADR-0004 extends its
-    scope to watchlist/earnings-cache/notifications/company-summaries, which
-    were previously local-only). News / market summaries / `export_rows`
-    remain local-only and are intentionally excluded — those code paths only
-    run on `LocalSQLiteBackend`.
+    scope to watchlist/earnings-cache/notifications/company-summaries; ADR-0006
+    further extends it to news / market-summary persistence now that the daily
+    pipeline runs against both backends). `export_rows` remains local-only and
+    is intentionally excluded — it is only used by the local→DynamoDB upload
+    tool.
     """
 
     def save_message(self, chat_id: str, role: str, content: str) -> None: ...
@@ -74,7 +77,7 @@ class StorageBackend(Protocol):
 
     def claim_update_id(self, update_id: int) -> bool: ...
 
-    def get_watchlist(self, chat_id: str | None = None) -> list[dict]: ...
+    def get_watchlist(self, chat_id: str) -> list[dict]: ...
 
     def add_to_watchlist(self, chat_id: str, symbol: str) -> bool: ...
 
@@ -105,6 +108,12 @@ class StorageBackend(Protocol):
     def upsert_company_summary(
         self, symbol: str, earning_date: str, summary: str
     ) -> None: ...
+
+    def insert_news(self, items: list[dict]) -> int: ...
+
+    def list_news_since(self, published_from: str) -> list[dict]: ...
+
+    def insert_market_summary(self, summary: str, news_ids: list) -> None: ...
 
 
 @lru_cache(maxsize=1)
@@ -749,6 +758,7 @@ class DynamoDBBackend:
         self._earnings_calendar = resource.Table(earnings_calendar_table())
         self._earnings_notifications = resource.Table(earnings_notifications_table())
         self._company_summaries = resource.Table(company_summaries_table())
+        self._news = resource.Table(news_table())
 
     def save_message(self, chat_id: str, role: str, content: str) -> None:
         self._conversations.put_item(
@@ -817,18 +827,8 @@ class DynamoDBBackend:
                 return False
             raise
 
-    def get_watchlist(self, chat_id: str | None = None) -> list[dict[str, Any]]:
-        """chat_id's own watchlist, sorted by position.
-
-        chat_id=None is a transitional branch returning the global
-        DEFAULT_WATCHLIST, kept for `scheduler_handler._notify_live()` (PR-2
-        removes `_notify_live` and this branch — see ADR-0004 #8).
-        """
-        if chat_id is None:
-            from agent.db.watchlist import DEFAULT_WATCHLIST
-
-            return [item.copy() for item in DEFAULT_WATCHLIST]
-
+    def get_watchlist(self, chat_id: str) -> list[dict[str, Any]]:
+        """chat_id's own watchlist, sorted by position."""
         resp = self._watchlist.query(KeyConditionExpression=Key("chat_id").eq(chat_id))
         items = sorted(resp.get("Items", []), key=lambda item: item["position"])
         return [{"symbol": item["symbol"]} for item in items]
@@ -1042,3 +1042,83 @@ class DynamoDBBackend:
                 "ttl": int(time.time()) + COMPANY_SUMMARIES_TTL_SECONDS,
             }
         )
+
+    def insert_news(self, items: list[dict[str, Any]]) -> int:
+        """Insert news rows into NewsTable, deduping by headline via a
+        conditional put. Returns the count of newly inserted (distinct)
+        headlines — duplicates (within this batch or already stored) don't
+        count, matching `LocalSQLiteBackend.insert_news`."""
+        fetched_at = datetime.now(timezone.utc).isoformat()
+        ttl = int(time.time()) + NEWS_TTL_SECONDS
+        seen: set[str] = set()
+        inserted = 0
+        for it in items:
+            headline = it["headline"]
+            if headline in seen:
+                continue
+            seen.add(headline)
+            item: dict[str, Any] = {
+                "headline": headline,
+                "bucket": "news",
+                "published_at": it["published_at"],
+                "category": it["category"],
+                "summary": it.get("summary", ""),
+                "fetched_at": fetched_at,
+                "ttl": ttl,
+            }
+            if it.get("symbol") is not None:
+                item["symbol"] = it["symbol"]
+            if it.get("url") is not None:
+                item["url"] = it["url"]
+            try:
+                self._news.put_item(
+                    Item=item, ConditionExpression="attribute_not_exists(headline)"
+                )
+                inserted += 1
+            except ClientError as e:
+                if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                    raise
+        return inserted
+
+    def list_news_since(self, published_from: str) -> list[dict[str, Any]]:
+        """News published on/after published_from, newest first.
+
+        `id` on each returned row is the headline (the NewsTable PK), so
+        `market_summary.generate_market_summary`'s `it["id"]` usage works
+        unchanged across both backends.
+        """
+        resp = self._news.query(
+            IndexName="published-at-index",
+            KeyConditionExpression=Key("bucket").eq("news")
+            & Key("published_at").gte(published_from),
+            ScanIndexForward=False,
+        )
+        items = list(resp.get("Items", []))
+        while "LastEvaluatedKey" in resp:
+            resp = self._news.query(
+                IndexName="published-at-index",
+                KeyConditionExpression=Key("bucket").eq("news")
+                & Key("published_at").gte(published_from),
+                ScanIndexForward=False,
+                ExclusiveStartKey=resp["LastEvaluatedKey"],
+            )
+            items.extend(resp.get("Items", []))
+        return [
+            {
+                "id": item["headline"],
+                "category": item.get("category"),
+                "symbol": item.get("symbol"),
+                "headline": item["headline"],
+                "summary": item.get("summary"),
+                "url": item.get("url"),
+                "published_at": item["published_at"],
+            }
+            for item in items
+        ]
+
+    def insert_market_summary(self, summary: str, news_ids: list) -> None:
+        """No-op: the cloud backend doesn't persist market summaries — it's a
+        write-only audit log that production never reads back, and its
+        news_ids audit trail is tied to sqlite autoincrement ids that don't
+        map onto DynamoDB's headline PK (ADR-0006 §3)."""
+        return None

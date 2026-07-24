@@ -2,37 +2,6 @@ import sqlite3
 
 from agent.db.backend import LocalSQLiteBackend
 
-EXPECTED_WATCHLIST = [
-    "AAOI",
-    "AAPL",
-    "AMD",
-    "AMZN",
-    "ARM",
-    "ASML",
-    "AXTI",
-    "COHR",
-    "CRCL",
-    "CRWD",
-    "DELL",
-    "GLW",
-    "GOOGL",
-    "INTC",
-    "LITE",
-    "META",
-    "MRVL",
-    "MSFT",
-    "MU",
-    "NET",
-    "NVDA",
-    "QQQ",
-    "SNDK",
-    "SOFI",
-    "SOXX",
-    "SPCX",
-    "TSLA",
-    "TSM",
-]
-
 
 def test_local_store_creates_junction_watchlist_schema(local_store):
     LocalSQLiteBackend(local_store)
@@ -168,14 +137,6 @@ def test_migration_drops_exchange_column_from_existing_per_subscriber_db(tmp_pat
         columns = {row[1] for row in conn.execute("PRAGMA table_info(watchlist)")}
     assert columns == {"chat_id", "symbol", "position"}
     assert backend.get_watchlist("111") == [{"symbol": "AAPL"}]
-
-
-def test_get_watchlist_uses_code_defaults_for_dynamodb(monkeypatch):
-    from agent.db.watchlist import get_watchlist
-
-    monkeypatch.setenv("STORAGE_BACKEND", "dynamodb")
-
-    assert [item["symbol"] for item in get_watchlist()] == EXPECTED_WATCHLIST
 
 
 def test_add_remove_actually_work_for_dynamodb(aws):

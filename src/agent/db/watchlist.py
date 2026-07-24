@@ -36,9 +36,8 @@ DEFAULT_WATCHLIST = [
 ]
 
 
-def get_watchlist(chat_id: str | None = None) -> list[dict[str, str]]:
-    """chat_id's own watchlist. chat_id=None returns the global DEFAULT_WATCHLIST
-    (transitional, used by scheduler_handler._notify_live; see ADR-0004 #8)."""
+def get_watchlist(chat_id: str) -> list[dict[str, str]]:
+    """chat_id's own watchlist, sorted by position."""
     return get_backend().get_watchlist(chat_id)
 
 
