@@ -3,34 +3,34 @@ import sqlite3
 from agent.db.backend import LocalSQLiteBackend
 
 EXPECTED_WATCHLIST = [
-    ("NASDAQGM", "AAOI"),
-    ("NASDAQGS", "AAPL"),
-    ("NASDAQGS", "AMD"),
-    ("NASDAQGS", "AMZN"),
-    ("NASDAQGS", "ARM"),
-    ("NASDAQGS", "ASML"),
-    ("NASDAQGS", "AXTI"),
-    ("NYSE", "COHR"),
-    ("NYSE", "CRCL"),
-    ("NASDAQGS", "CRWD"),
-    ("NYSE", "DELL"),
-    ("NYSE", "GLW"),
-    ("NASDAQGS", "GOOGL"),
-    ("NASDAQGS", "INTC"),
-    ("NASDAQGS", "LITE"),
-    ("NASDAQGS", "META"),
-    ("NASDAQGS", "MRVL"),
-    ("NASDAQGS", "MSFT"),
-    ("NASDAQGS", "MU"),
-    ("NYSE", "NET"),
-    ("NASDAQGS", "NVDA"),
-    ("NASDAQGM", "QQQ"),
-    ("NASDAQGS", "SNDK"),
-    ("NASDAQGS", "SOFI"),
-    ("NASDAQGM", "SOXX"),
-    ("NASDAQGS", "SPCX"),
-    ("NASDAQGS", "TSLA"),
-    ("NYSE", "TSM"),
+    "AAOI",
+    "AAPL",
+    "AMD",
+    "AMZN",
+    "ARM",
+    "ASML",
+    "AXTI",
+    "COHR",
+    "CRCL",
+    "CRWD",
+    "DELL",
+    "GLW",
+    "GOOGL",
+    "INTC",
+    "LITE",
+    "META",
+    "MRVL",
+    "MSFT",
+    "MU",
+    "NET",
+    "NVDA",
+    "QQQ",
+    "SNDK",
+    "SOFI",
+    "SOXX",
+    "SPCX",
+    "TSLA",
+    "TSM",
 ]
 
 
@@ -47,7 +47,7 @@ def test_local_store_creates_junction_watchlist_schema(local_store):
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")
         }
 
-    assert columns == {"chat_id", "symbol", "exchange", "position"}
+    assert columns == {"chat_id", "symbol", "position"}
     assert pk_columns == {"chat_id", "symbol"}
     assert "idx_watchlist_symbol" in indexes
 
@@ -97,12 +97,12 @@ def test_migration_copies_old_global_watchlist_to_each_subscriber(monkeypatch, t
     backend = LocalSQLiteBackend(store_path)
 
     assert backend.get_watchlist("111") == [
-        {"symbol": "AAPL", "exchange": "NASDAQGS"},
-        {"symbol": "NVDA", "exchange": "NASDAQGS"},
+        {"symbol": "AAPL"},
+        {"symbol": "NVDA"},
     ]
     assert backend.get_watchlist("222") == [
-        {"symbol": "AAPL", "exchange": "NASDAQGS"},
-        {"symbol": "NVDA", "exchange": "NASDAQGS"},
+        {"symbol": "AAPL"},
+        {"symbol": "NVDA"},
     ]
 
     with sqlite3.connect(store_path) as conn:
@@ -112,9 +112,7 @@ def test_migration_copies_old_global_watchlist_to_each_subscriber(monkeypatch, t
     # Idempotent: rebuild against already-migrated store doesn't duplicate/overwrite.
     backend.remove_from_watchlist("111", "NVDA")
     LocalSQLiteBackend(store_path)
-    assert backend.get_watchlist("111") == [
-        {"symbol": "AAPL", "exchange": "NASDAQGS"}
-    ]
+    assert backend.get_watchlist("111") == [{"symbol": "AAPL"}]
 
 
 def test_migration_discards_old_rows_when_no_subscribers(tmp_path):
@@ -148,14 +146,36 @@ def test_migration_discards_old_rows_when_no_subscribers(tmp_path):
     assert backend.get_watchlist("anyone") == []
 
 
+def test_migration_drops_exchange_column_from_existing_per_subscriber_db(tmp_path):
+    store_path = tmp_path / "per_subscriber_with_exchange.sqlite3"
+    with sqlite3.connect(store_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE watchlist (
+                chat_id TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                exchange TEXT,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (chat_id, symbol)
+            )
+            """
+        )
+        conn.execute("INSERT INTO watchlist VALUES ('111', 'AAPL', 'NASDAQGS', 0)")
+
+    backend = LocalSQLiteBackend(store_path)
+
+    with sqlite3.connect(store_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(watchlist)")}
+    assert columns == {"chat_id", "symbol", "position"}
+    assert backend.get_watchlist("111") == [{"symbol": "AAPL"}]
+
+
 def test_get_watchlist_uses_code_defaults_for_dynamodb(monkeypatch):
     from agent.db.watchlist import get_watchlist
 
     monkeypatch.setenv("STORAGE_BACKEND", "dynamodb")
 
-    assert [
-        (item["exchange"], item["symbol"]) for item in get_watchlist()
-    ] == EXPECTED_WATCHLIST
+    assert [item["symbol"] for item in get_watchlist()] == EXPECTED_WATCHLIST
 
 
 def test_add_remove_raise_not_implemented_for_dynamodb(monkeypatch):
@@ -176,9 +196,9 @@ def test_seed_if_empty_writes_default_watchlist(local_store):
 
     seed_watchlist_if_empty("111")
 
-    assert [
-        (item["exchange"], item["symbol"]) for item in get_watchlist("111")
-    ] == [(item["exchange"], item["symbol"]) for item in DEFAULT_WATCHLIST]
+    assert [item["symbol"] for item in get_watchlist("111")] == [
+        item["symbol"] for item in DEFAULT_WATCHLIST
+    ]
 
 
 def test_seed_if_empty_does_not_overwrite_existing_watchlist(local_store):
@@ -187,7 +207,7 @@ def test_seed_if_empty_does_not_overwrite_existing_watchlist(local_store):
     add_to_watchlist("111", "TSLA")
     seed_watchlist_if_empty("111")
 
-    assert get_watchlist("111") == [{"symbol": "TSLA", "exchange": None}]
+    assert get_watchlist("111") == [{"symbol": "TSLA"}]
 
 
 def test_custom_watchlist_survives_backend_reconstruction(local_store):
@@ -200,7 +220,7 @@ def test_custom_watchlist_survives_backend_reconstruction(local_store):
     LocalSQLiteBackend(local_store)
     get_backend.cache_clear()
 
-    assert get_watchlist("111") == [{"symbol": "TSLA", "exchange": None}]
+    assert get_watchlist("111") == [{"symbol": "TSLA"}]
 
 
 def test_add_to_watchlist_normalizes_uppercase_and_assigns_position(local_store):

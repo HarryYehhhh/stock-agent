@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-24 — remove-watchlist-exchange — evaluator — ✅ Pass
+- 連結：docs/qa-reports/remove-watchlist-exchange.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 131 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 143 passed, 0 failed；🔴 0、🟡 0（🟢 2：DROP COLUMN migration 依賴 SQLite ≥3.35、歷史 docs 仍留 exchange 字樣但使用者已明確排除範圍）；循環次數 1；未解 P0/P1 0。驗收範圍：`db/watchlist.py`（DEFAULT_WATCHLIST 28 筆只留 symbol）、`db/backend.py`（Protocol/Local/DynamoDB 三處 `add_to_watchlist` 拿掉 exchange 參數、watchlist CREATE TABLE 移除 exchange 欄、新增 `PRAGMA table_info` 偵測 + `ALTER TABLE DROP COLUMN` migration、`_migrate_watchlist_schema` 與六個查詢方法全數移除 exchange）、`scheduler_handler.py`（兩個 prompt template、`_company_summary`、`_notify_live` 移除 exchange）、`processor_handler.py`（`/watchlist` 只顯示 symbol）；grep 覆核 `exchange`/`NASDAQ`/`NYSE` 僅剩 migration 程式碼本身與模擬舊 schema 的測試 fixture，均合理保留非殘留；新增 `test_migration_drops_exchange_column_from_existing_per_subscriber_db` 用 `PRAGMA table_info` 斷言精準覆蓋 DROP COLUMN migration 行為；改動手術式，working tree 內其餘既有未提交檔案（Makefile/local_server.py/market_summary.py 等）核對均屬其他 phase 既有工作、本次未觸碰。
+
 ## 2026-07-23 — watchlist-notify-flow-verification（T3 流程 A）— evaluator — ✅ Pass
 - 連結：docs/qa-reports/manual-test-watchlist-notify.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -q` 基準 124 → 最終 129 passed（sandbox 擋既有 `finnhub_stub` 12 個 socket 測試，已用 `dangerouslyDisableSandbox` 重跑）；新增 `tests/test_watchlist_notify_flow.py` 5 案例對應 spec 全部 7 條 acceptance criteria，全鏈路驅動 `_process_update → sync_earnings → handler(_notify_local)`，僅打樁 Finnhub/Groq/Telegram 三個外部邊界；冪等斷言已用 mutation test（拿掉 `mark_notified`）驗證有效；🔴 0、🟡 0（🟢 2：一處恆真斷言、建議合併 T1/T2 分支避免基準漂移）；循環次數 1；未解 P0/P1 0；本任務為 agent 自動化整合驗證，非人工手動互動；`src/` 無改動，未發現既有真 bug

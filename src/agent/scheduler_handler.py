@@ -35,18 +35,17 @@ MAX_DATA_AGE_HOURS = 24
 
 PROMPT_TEMPLATE = (
     "明天（{tomorrow}）有以下固定追蹤清單公司公布財報：{earnings}\n\n"
-    "請用繁體中文條列每家公司的：股票代號（交易所）、財報時間（盤前/盤後）、"
+    "請用繁體中文條列每家公司的：股票代號、財報時間（盤前/盤後）、"
     "分析師 EPS 預期、營收預期，並在最後附上 1-2 句整體市場注意事項。"
-    "交易所取自每筆資料的 exchange 欄位。"
     "請列出上方傳入的每家公司，不要自行挑選或省略。"
 )
 
 COMPANY_PROMPT_TEMPLATE = (
-    "明天（{tomorrow}）{symbol}（{exchange}）將公布財報，快取資料：{row}\n\n"
+    "明天（{tomorrow}）{symbol}將公布財報，快取資料：{row}\n\n"
     "請用繁體中文寫 2-3 句的財報前瞻摘要：財報時間（盤前/盤後/盤中）、"
     "分析師 EPS 預期與營收預期，以及一句該公司近期值得注意的重點。"
     "輸出使用 Telegram Markdown（粗體寫成 *text*，不要使用 ** 或 __），"
-    "第一行以 *{symbol}*（{exchange}）開頭，不要加其他標題。"
+    "第一行以 *{symbol}* 開頭，不要加其他標題。"
 )
 
 
@@ -103,7 +102,6 @@ def _company_summary(backend, row: dict, tomorrow: str) -> str:
             COMPANY_PROMPT_TEMPLATE.format(
                 tomorrow=tomorrow,
                 symbol=symbol,
-                exchange=row.get("exchange") or "-",
                 row=data,
             ),
             [],
@@ -111,7 +109,7 @@ def _company_summary(backend, row: dict, tomorrow: str) -> str:
     except Exception:
         logger.exception("summary generation failed for %s", symbol)
         return (
-            f"*{symbol}*（{row.get('exchange') or '-'}）："
+            f"*{symbol}*："
             f"時段 {row.get('extended_hour') or '未知'}、"
             f"EPS 預期 {row.get('eps_estimate') or '未知'}、"
             f"營收預期 {row.get('revenue_estimate') or '未知'}"
@@ -168,7 +166,7 @@ def _notify_live(tomorrow: str) -> None:
         except Exception:
             logger.exception("earnings lookup failed for %s", symbol)
             continue
-        earnings.extend({**row, "exchange": item["exchange"]} for row in rows)
+        earnings.extend(rows)
 
     if not earnings:
         logger.info("no watchlist earnings tomorrow, skip push")

@@ -164,9 +164,9 @@ def test_watchlist_earnings_join_and_notification_tracking(local_store):
     backend.subscribe("111")
     backend.subscribe("222")
     backend.unsubscribe("222")  # inactive: excluded from the notification join
-    backend.add_to_watchlist("111", "AAPL", exchange="NASDAQGS")
-    backend.add_to_watchlist("111", "NVDA", exchange="NASDAQGS")
-    backend.add_to_watchlist("222", "AAPL", exchange="NASDAQGS")
+    backend.add_to_watchlist("111", "AAPL")
+    backend.add_to_watchlist("111", "NVDA")
+    backend.add_to_watchlist("222", "AAPL")
     backend.upsert_earnings_calendar(
         [
             {"symbol": "NVDA", "date": "2026-07-23", "hour": "amc"},
@@ -183,7 +183,6 @@ def test_watchlist_earnings_join_and_notification_tracking(local_store):
         ("111", "AAPL"),
         ("111", "NVDA"),
     ]
-    assert rows[0]["exchange"] == "NASDAQGS"
     assert rows[0]["updated_at"] is not None
 
     symbols = ["AAPL", "NVDA"]

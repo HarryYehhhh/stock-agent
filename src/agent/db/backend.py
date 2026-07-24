@@ -63,9 +63,7 @@ class StorageBackend(Protocol):
 
     def get_watchlist(self, chat_id: str | None = None) -> list[dict]: ...
 
-    def add_to_watchlist(
-        self, chat_id: str, symbol: str, exchange: str | None = None
-    ) -> bool: ...
+    def add_to_watchlist(self, chat_id: str, symbol: str) -> bool: ...
 
     def remove_from_watchlist(self, chat_id: str, symbol: str) -> bool: ...
 
@@ -129,7 +127,6 @@ class LocalSQLiteBackend:
                 CREATE TABLE IF NOT EXISTS watchlist (
                     chat_id TEXT NOT NULL,
                     symbol TEXT NOT NULL,
-                    exchange TEXT,
                     position INTEGER NOT NULL,
                     PRIMARY KEY (chat_id, symbol)
                 )
@@ -141,6 +138,12 @@ class LocalSQLiteBackend:
                 ON watchlist (symbol)
                 """
             )
+            # Migrate pre-existing per-subscriber DBs that still carry exchange.
+            watchlist_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(watchlist)")
+            }
+            if "exchange" in watchlist_columns:
+                conn.execute("ALTER TABLE watchlist DROP COLUMN exchange")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS earnings_calendar (
@@ -226,7 +229,7 @@ class LocalSQLiteBackend:
         """One-time migration from the old global watchlist to per-subscriber rows.
 
         Old shape: watchlist(ticker PRIMARY KEY, exchange, position) — a single
-        global list. New shape: watchlist(chat_id, symbol, exchange, position),
+        global list. New shape: watchlist(chat_id, symbol, position),
         PRIMARY KEY (chat_id, symbol). Detected by absence of a chat_id column;
         idempotent because the new shape short-circuits this method.
         """
@@ -240,9 +243,7 @@ class LocalSQLiteBackend:
         if "chat_id" in columns:
             return
 
-        old_rows = conn.execute(
-            "SELECT ticker, exchange, position FROM watchlist"
-        ).fetchall()
+        old_rows = conn.execute("SELECT ticker, position FROM watchlist").fetchall()
         subscriber_ids = [
             row["chat_id"] for row in conn.execute("SELECT chat_id FROM subscribers")
         ]
@@ -253,7 +254,6 @@ class LocalSQLiteBackend:
             CREATE TABLE watchlist (
                 chat_id TEXT NOT NULL,
                 symbol TEXT NOT NULL,
-                exchange TEXT,
                 position INTEGER NOT NULL,
                 PRIMARY KEY (chat_id, symbol)
             )
@@ -263,11 +263,11 @@ class LocalSQLiteBackend:
         if subscriber_ids and old_rows:
             conn.executemany(
                 """
-                INSERT INTO watchlist (chat_id, symbol, exchange, position)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO watchlist (chat_id, symbol, position)
+                VALUES (?, ?, ?)
                 """,
                 [
-                    (chat_id, row["ticker"], row["exchange"], row["position"])
+                    (chat_id, row["ticker"], row["position"])
                     for chat_id in subscriber_ids
                     for row in old_rows
                 ],
@@ -342,7 +342,7 @@ class LocalSQLiteBackend:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT symbol, exchange
+                SELECT symbol
                 FROM watchlist
                 WHERE chat_id = ?
                 ORDER BY position
@@ -351,9 +351,7 @@ class LocalSQLiteBackend:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def add_to_watchlist(
-        self, chat_id: str, symbol: str, exchange: str | None = None
-    ) -> bool:
+    def add_to_watchlist(self, chat_id: str, symbol: str) -> bool:
         """Add symbol (uppercased) to chat_id's watchlist. No-op if already present."""
         symbol = symbol.upper()
         with self._connect() as conn:
@@ -370,10 +368,10 @@ class LocalSQLiteBackend:
             next_position = 0 if max_position is None else max_position + 1
             conn.execute(
                 """
-                INSERT INTO watchlist (chat_id, symbol, exchange, position)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO watchlist (chat_id, symbol, position)
+                VALUES (?, ?, ?)
                 """,
-                (chat_id, symbol, exchange, next_position),
+                (chat_id, symbol, next_position),
             )
         return True
 
@@ -398,21 +396,21 @@ class LocalSQLiteBackend:
                 return
             conn.executemany(
                 """
-                INSERT INTO watchlist (chat_id, symbol, exchange, position)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO watchlist (chat_id, symbol, position)
+                VALUES (?, ?, ?)
                 """,
                 [
-                    (chat_id, item["symbol"], item["exchange"], position)
+                    (chat_id, item["symbol"], position)
                     for position, item in enumerate(DEFAULT_WATCHLIST)
                 ],
             )
 
     def get_active_watchlist_symbols(self) -> list[dict[str, Any]]:
-        """Distinct symbols (with exchange) across all active subscribers' watchlists."""
+        """Distinct symbols across all active subscribers' watchlists."""
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT DISTINCT w.symbol AS symbol, w.exchange AS exchange
+                SELECT DISTINCT w.symbol AS symbol
                 FROM watchlist w
                 JOIN subscribers s ON s.chat_id = w.chat_id
                 WHERE s.active = 1
@@ -464,7 +462,7 @@ class LocalSQLiteBackend:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT w.chat_id AS chat_id, w.symbol AS symbol, w.exchange AS exchange,
+                SELECT w.chat_id AS chat_id, w.symbol AS symbol,
                        e.earning_date, e.extended_hour, e.eps_estimate,
                        e.revenue_estimate, e.updated_at
                 FROM watchlist w
@@ -484,7 +482,7 @@ class LocalSQLiteBackend:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT w.symbol AS symbol, w.exchange AS exchange,
+                SELECT w.symbol AS symbol,
                        e.earning_date, e.extended_hour, e.eps_estimate,
                        e.revenue_estimate, e.updated_at
                 FROM watchlist w
@@ -740,9 +738,7 @@ class DynamoDBBackend:
 
         return [item.copy() for item in DEFAULT_WATCHLIST]
 
-    def add_to_watchlist(
-        self, chat_id: str, symbol: str, exchange: str | None = None
-    ) -> bool:
+    def add_to_watchlist(self, chat_id: str, symbol: str) -> bool:
         raise NotImplementedError("watchlist management is only supported on the local backend")
 
     def remove_from_watchlist(self, chat_id: str, symbol: str) -> bool:
