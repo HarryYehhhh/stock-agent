@@ -152,13 +152,17 @@ def test_subscribe_does_not_overwrite_existing_custom_watchlist(local_store, fak
     assert "AAPL" not in body
 
 
-def test_watch_and_unwatch_are_graceful_on_dynamodb_backend(monkeypatch, fake_send):
-    monkeypatch.setenv("STORAGE_BACKEND", "dynamodb")
-
+def test_watch_and_unwatch_actually_work_on_dynamodb_backend(aws, fake_send):
+    # DynamoDBBackend.add/remove_to_watchlist no longer raise NotImplementedError
+    # (PR-1 backfilled real per-subscriber watchlist support); the
+    # NotImplementedError catch in processor_handler.py is now dead code,
+    # left in place for PR-2 to remove alongside LOCAL_ONLY_MESSAGE.
     _send_update("111", "/watch AAPL")
     body = fake_send.call_args.args[1]
-    assert "僅本地模式" in body
+    assert "AAPL" in body
+    assert "僅本地模式" not in body
 
     _send_update("111", "/unwatch AAPL")
     body = fake_send.call_args.args[1]
-    assert "僅本地模式" in body
+    assert "AAPL" in body
+    assert "僅本地模式" not in body

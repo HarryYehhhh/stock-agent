@@ -18,6 +18,10 @@ REGION = "ap-northeast-1"
 CONVERSATIONS = "test-conversations"
 SUBSCRIBERS = "test-subscribers"
 PROCESSED = "test-processed"
+WATCHLIST = "test-watchlist"
+EARNINGS_CALENDAR = "test-earnings-calendar"
+EARNINGS_NOTIFICATIONS = "test-earnings-notifications"
+COMPANY_SUMMARIES = "test-company-summaries"
 QUEUE_NAME = "test-updates"
 
 
@@ -30,6 +34,10 @@ def env(monkeypatch):
     monkeypatch.setenv("CONVERSATIONS_TABLE", CONVERSATIONS)
     monkeypatch.setenv("SUBSCRIBERS_TABLE", SUBSCRIBERS)
     monkeypatch.setenv("PROCESSED_UPDATES_TABLE", PROCESSED)
+    monkeypatch.setenv("WATCHLIST_TABLE", WATCHLIST)
+    monkeypatch.setenv("EARNINGS_CALENDAR_TABLE", EARNINGS_CALENDAR)
+    monkeypatch.setenv("EARNINGS_NOTIFICATIONS_TABLE", EARNINGS_NOTIFICATIONS)
+    monkeypatch.setenv("COMPANY_SUMMARIES_TABLE", COMPANY_SUMMARIES)
     monkeypatch.setenv("FINNHUB_API_KEY", "fake-finnhub")
     monkeypatch.setenv("GROQ_API_KEY", "fake-groq")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot")
@@ -75,6 +83,61 @@ def aws():
             TableName=PROCESSED,
             KeySchema=[{"AttributeName": "update_id", "KeyType": "HASH"}],
             AttributeDefinitions=[{"AttributeName": "update_id", "AttributeType": "N"}],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName=WATCHLIST,
+            KeySchema=[
+                {"AttributeName": "chat_id", "KeyType": "HASH"},
+                {"AttributeName": "symbol", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "chat_id", "AttributeType": "S"},
+                {"AttributeName": "symbol", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName=EARNINGS_CALENDAR,
+            KeySchema=[
+                {"AttributeName": "symbol", "KeyType": "HASH"},
+                {"AttributeName": "earning_date", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "symbol", "AttributeType": "S"},
+                {"AttributeName": "earning_date", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "earning-date-index",
+                    "KeySchema": [{"AttributeName": "earning_date", "KeyType": "HASH"}],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName=EARNINGS_NOTIFICATIONS,
+            KeySchema=[
+                {"AttributeName": "chat_id", "KeyType": "HASH"},
+                {"AttributeName": "notify_key", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "chat_id", "AttributeType": "S"},
+                {"AttributeName": "notify_key", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName=COMPANY_SUMMARIES,
+            KeySchema=[
+                {"AttributeName": "symbol", "KeyType": "HASH"},
+                {"AttributeName": "earning_date", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "symbol", "AttributeType": "S"},
+                {"AttributeName": "earning_date", "AttributeType": "S"},
+            ],
             BillingMode="PAY_PER_REQUEST",
         )
         sqs = boto3.client("sqs", region_name=REGION)

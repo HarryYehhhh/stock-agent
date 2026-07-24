@@ -69,6 +69,24 @@ def processed_updates_table() -> str:
     return os.environ.get("PROCESSED_UPDATES_TABLE", "earnings-agent-processed-updates")
 
 
+def watchlist_table() -> str:
+    return os.environ.get("WATCHLIST_TABLE", "earnings-agent-watchlist")
+
+
+def earnings_calendar_table() -> str:
+    return os.environ.get("EARNINGS_CALENDAR_TABLE", "earnings-agent-earnings-calendar")
+
+
+def earnings_notifications_table() -> str:
+    return os.environ.get(
+        "EARNINGS_NOTIFICATIONS_TABLE", "earnings-agent-earnings-notifications"
+    )
+
+
+def company_summaries_table() -> str:
+    return os.environ.get("COMPANY_SUMMARIES_TABLE", "earnings-agent-company-summaries")
+
+
 def updates_queue_url() -> str:
     return os.environ["UPDATES_QUEUE_URL"]
 

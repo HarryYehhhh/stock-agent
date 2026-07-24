@@ -178,17 +178,14 @@ def test_get_watchlist_uses_code_defaults_for_dynamodb(monkeypatch):
     assert [item["symbol"] for item in get_watchlist()] == EXPECTED_WATCHLIST
 
 
-def test_add_remove_raise_not_implemented_for_dynamodb(monkeypatch):
-    import pytest
+def test_add_remove_actually_work_for_dynamodb(aws):
+    from agent.db.watchlist import add_to_watchlist, get_watchlist, remove_from_watchlist
 
-    from agent.db.watchlist import add_to_watchlist, remove_from_watchlist
+    assert add_to_watchlist("111", "AAPL") is True
+    assert get_watchlist("111") == [{"symbol": "AAPL"}]
 
-    monkeypatch.setenv("STORAGE_BACKEND", "dynamodb")
-
-    with pytest.raises(NotImplementedError):
-        add_to_watchlist("111", "AAPL")
-    with pytest.raises(NotImplementedError):
-        remove_from_watchlist("111", "AAPL")
+    assert remove_from_watchlist("111", "AAPL") is True
+    assert get_watchlist("111") == []
 
 
 def test_seed_if_empty_writes_default_watchlist(local_store):
@@ -259,3 +256,51 @@ def test_watchlists_are_isolated_per_chat_id(local_store):
 
     assert [item["symbol"] for item in get_watchlist("111")] == ["TSLA"]
     assert [item["symbol"] for item in get_watchlist("222")] == ["AAPL"]
+
+
+def test_dynamodb_get_watchlist_scoped_to_chat_id_and_sorted_by_position(aws):
+    from agent.db.watchlist import add_to_watchlist, get_watchlist
+
+    add_to_watchlist("111", "tsla")
+    add_to_watchlist("111", "aapl")
+    add_to_watchlist("222", "NVDA")
+
+    assert [item["symbol"] for item in get_watchlist("111")] == ["TSLA", "AAPL"]
+    assert [item["symbol"] for item in get_watchlist("222")] == ["NVDA"]
+
+
+def test_dynamodb_add_to_watchlist_duplicate_is_noop(aws):
+    from agent.db.watchlist import add_to_watchlist, get_watchlist
+
+    assert add_to_watchlist("111", "TSLA") is True
+    assert add_to_watchlist("111", "tsla") is False
+
+    assert [item["symbol"] for item in get_watchlist("111")] == ["TSLA"]
+
+
+def test_dynamodb_remove_from_watchlist_reports_whether_removed(aws):
+    from agent.db.watchlist import add_to_watchlist, get_watchlist, remove_from_watchlist
+
+    add_to_watchlist("111", "TSLA")
+
+    assert remove_from_watchlist("111", "tsla") is True
+    assert remove_from_watchlist("111", "TSLA") is False
+    assert get_watchlist("111") == []
+
+
+def test_dynamodb_seed_watchlist_if_empty_seeds_default_only_when_empty(aws):
+    from agent.db.watchlist import (
+        DEFAULT_WATCHLIST,
+        add_to_watchlist,
+        get_watchlist,
+        seed_watchlist_if_empty,
+    )
+
+    seed_watchlist_if_empty("111")
+    assert [item["symbol"] for item in get_watchlist("111")] == [
+        item["symbol"] for item in DEFAULT_WATCHLIST
+    ]
+
+    add_to_watchlist("222", "TSLA")
+    seed_watchlist_if_empty("222")
+    assert get_watchlist("222") == [{"symbol": "TSLA"}]

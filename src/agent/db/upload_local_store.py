@@ -19,6 +19,7 @@ from agent.config import (
     conversations_table,
     processed_updates_table,
     subscribers_table,
+    watchlist_table,
 )
 from agent.db.backend import LocalSQLiteBackend, local_store_path, selected_backend_name
 
@@ -46,6 +47,7 @@ def _write_rows(rows: dict) -> None:
     conversations = ddb.Table(conversations_table())
     subscribers = ddb.Table(subscribers_table())
     dedup = ddb.Table(processed_updates_table())
+    watchlist = ddb.Table(watchlist_table())
 
     for item in rows["conversations"]:
         conversations.put_item(Item=item)
@@ -53,6 +55,8 @@ def _write_rows(rows: dict) -> None:
         subscribers.put_item(Item=item)
     for item in rows["dedup"]:
         dedup.put_item(Item=item)
+    for item in rows["watchlist"]:
+        watchlist.put_item(Item=item)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,7 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     mode = "write" if args.write else "dry-run"
     print(
         f"{mode}: conversations={counts['conversations']} "
-        f"subscribers={counts['subscribers']} dedup={counts['dedup']}"
+        f"subscribers={counts['subscribers']} dedup={counts['dedup']} "
+        f"watchlist={counts['watchlist']}"
     )
 
     if not args.write:

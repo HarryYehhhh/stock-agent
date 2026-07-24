@@ -15,6 +15,18 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-24 — dynamodb-backend-pr1-sprint（follow-up：補日期區間邊界測試）— evaluator — ✅ Pass
+- 連結：docs/qa-reports/dynamodb-backend-pr1-sprint.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 145 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 157 passed, 0 failed；只補 `tests/test_dynamodb_backend.py` 新增 `test_dynamodb_watchlist_earnings_date_range_boundaries`，`src/` 零改動；🔴 0、🟡 0（解掉前次 🟡：`get_chat_watchlist_earnings` 缺日期區間過濾邊界測試）；循環次數 1；未解 P0/P1 0。
+
+## 2026-07-24 — dynamodb-backend-pr1-sprint — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/dynamodb-backend-pr1-sprint.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 144 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 156 passed, 0 failed；🔴 0、🟡 1（`get_chat_watchlist_earnings` 缺日期區間過濾邊界測試，contract Tests required 明確列出但未覆蓋）；循環次數 1；未解 P0/P1 0。
+
+## 2026-07-24 — dynamodb-backend-pr1（Phase 2 PR-1）— planner — spec + contract + ADR 完成
+- 連結：docs/specs/dynamodb-production-tables.md, docs/contracts/dynamodb-backend-pr1-sprint.md, docs/decisions/0004-dynamodb-production-tables.md
+- 備註：細化 Phase 2 PR-1（DynamoDB 四張新表 + DynamoDBBackend 補實作 + infra/IAM + 測試）。關鍵決策：多表風格 + application-side join；watchlist symbol GSI 省略；通知冪等改 conditional put（attribute_not_exists，同 claim_update_id）；TTL earnings_calendar 45 天 / notifications 30 天 / company_summaries 30 天 / watchlist 無 TTL；float↔Decimal 轉換保 parity；7 個原 local-only 方法升格進 StorageBackend Protocol（延伸 ADR-0003）；`get_watchlist(None)` 保留 DEFAULT_WATCHLIST 過渡分支（PR-2 移除）；upload_local_store 只搬 watchlist、不搬三個快取表。明確不改 scheduler_handler / processor_handler（PR-2）、不含 news/market_summaries（PR-3）。開放邊界：cutover 當天可能一次重複通知，以切換時機規避。
+
 ## 2026-07-24 — remove-watchlist-exchange — evaluator — ✅ Pass
 - 連結：docs/qa-reports/remove-watchlist-exchange.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 131 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 143 passed, 0 failed；🔴 0、🟡 0（🟢 2：DROP COLUMN migration 依賴 SQLite ≥3.35、歷史 docs 仍留 exchange 字樣但使用者已明確排除範圍）；循環次數 1；未解 P0/P1 0。驗收範圍：`db/watchlist.py`（DEFAULT_WATCHLIST 28 筆只留 symbol）、`db/backend.py`（Protocol/Local/DynamoDB 三處 `add_to_watchlist` 拿掉 exchange 參數、watchlist CREATE TABLE 移除 exchange 欄、新增 `PRAGMA table_info` 偵測 + `ALTER TABLE DROP COLUMN` migration、`_migrate_watchlist_schema` 與六個查詢方法全數移除 exchange）、`scheduler_handler.py`（兩個 prompt template、`_company_summary`、`_notify_live` 移除 exchange）、`processor_handler.py`（`/watchlist` 只顯示 symbol）；grep 覆核 `exchange`/`NASDAQ`/`NYSE` 僅剩 migration 程式碼本身與模擬舊 schema 的測試 fixture，均合理保留非殘留；新增 `test_migration_drops_exchange_column_from_existing_per_subscriber_db` 用 `PRAGMA table_info` 斷言精準覆蓋 DROP COLUMN migration 行為；改動手術式，working tree 內其餘既有未提交檔案（Makefile/local_server.py/market_summary.py 等）核對均屬其他 phase 既有工作、本次未觸碰。

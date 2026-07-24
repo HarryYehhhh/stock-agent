@@ -1,4 +1,4 @@
-"""Per-subscriber earnings watchlist (local backend); global default elsewhere."""
+"""Per-subscriber earnings watchlist."""
 
 from __future__ import annotations
 
@@ -37,29 +37,21 @@ DEFAULT_WATCHLIST = [
 
 
 def get_watchlist(chat_id: str | None = None) -> list[dict[str, str]]:
-    """Local backend: chat_id's own watchlist. DynamoDB: global DEFAULT_WATCHLIST."""
+    """chat_id's own watchlist. chat_id=None returns the global DEFAULT_WATCHLIST
+    (transitional, used by scheduler_handler._notify_live; see ADR-0004 #8)."""
     return get_backend().get_watchlist(chat_id)
 
 
 def add_to_watchlist(chat_id: str, symbol: str) -> bool:
-    """Add symbol to chat_id's watchlist. Returns True if newly added.
-
-    Raises NotImplementedError on the dynamodb backend (local-only feature).
-    """
+    """Add symbol to chat_id's watchlist. Returns True if newly added."""
     return get_backend().add_to_watchlist(chat_id, symbol)
 
 
 def remove_from_watchlist(chat_id: str, symbol: str) -> bool:
-    """Remove symbol from chat_id's watchlist. Returns True if actually removed.
-
-    Raises NotImplementedError on the dynamodb backend (local-only feature).
-    """
+    """Remove symbol from chat_id's watchlist. Returns True if actually removed."""
     return get_backend().remove_from_watchlist(chat_id, symbol)
 
 
 def seed_watchlist_if_empty(chat_id: str) -> None:
-    """Seed chat_id with DEFAULT_WATCHLIST if it has no watchlist rows yet.
-
-    No-op on the dynamodb backend, which already returns DEFAULT_WATCHLIST globally.
-    """
+    """Seed chat_id with DEFAULT_WATCHLIST if it has no watchlist rows yet."""
     get_backend().seed_watchlist_if_empty(chat_id)
