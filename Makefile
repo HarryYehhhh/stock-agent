@@ -1,7 +1,11 @@
-.PHONY: install test lint dev notify-earnings sync-earnings daily-summary build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put
+.PHONY: install test lint dev notify-earnings sync-earnings daily-summary build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
 
 REGION ?= ap-northeast-1
 STACK ?= earnings-agent
+DDB_PREFIX ?= earnings-agent
+
+# jq filter: 把 DynamoDB typed JSON（{"S":"x"}）攤平成一般值
+DDB_UNWRAP := def u: if type=="object" then (if has("S") then .S elif has("N") then (.N|tonumber) elif has("BOOL") then .BOOL elif has("NULL") then null elif has("M") then (.M|map_values(u)) elif has("L") then (.L|map(u)) elif has("SS") then .SS elif has("NS") then (.NS|map(tonumber)) else map_values(u) end) else . end; (.Items // []) | map(map_values(u))
 
 install:
 	uv sync
@@ -66,3 +70,21 @@ logs-processor:
 
 logs-scheduler:
 	cd infra && sam logs --stack-name $(STACK) --region $(REGION) -n SchedulerFunction --tail
+
+# 列出本 stack 的所有 DynamoDB 表（去掉 prefix）
+ddb-tables:
+	@aws dynamodb list-tables --region $(REGION) --output json \
+	  | jq -r '.TableNames[] | select(startswith("$(DDB_PREFIX)-")) | sub("^$(DDB_PREFIX)-";"")'
+
+# 掃描單一表，輸出攤平後的 JSON。用法：make ddb-scan TABLE=subscribers
+# 注意：scan 單次上限 1MB，大表僅回傳第一頁
+ddb-scan:
+	@test -n "$(TABLE)" || (echo "usage: make ddb-scan TABLE=subscribers" && exit 1)
+	@aws dynamodb scan --table-name $(DDB_PREFIX)-$(TABLE) --region $(REGION) --output json \
+	  | jq '$(DDB_UNWRAP)'
+
+# 計算表內筆數。用法：make ddb-count TABLE=subscribers
+ddb-count:
+	@test -n "$(TABLE)" || (echo "usage: make ddb-count TABLE=subscribers" && exit 1)
+	@aws dynamodb scan --table-name $(DDB_PREFIX)-$(TABLE) --region $(REGION) --select COUNT --output json \
+	  | jq '.Count'
