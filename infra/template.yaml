@@ -9,6 +9,9 @@ Parameters:
   Region:
     Type: String
     Default: ap-northeast-1
+  AlarmEmail:
+    Type: String
+    Description: Email address subscribed to pipeline failure alarms (set at deploy time; do not commit real value).
 
 Globals:
   Function:
@@ -305,16 +308,93 @@ Resources:
               Action: kms:Decrypt
               Resource: !Sub "arn:aws:kms:${Region}:${AWS::AccountId}:key/alias/aws/ssm"
       Events:
-        Daily:
+        SyncSchedule:
           Type: ScheduleV2
           Properties:
-            ScheduleExpression: "cron(0 0 * * ? *)"
-            ScheduleExpressionTimezone: UTC
-            State: DISABLED
+            ScheduleExpression: "cron(0 8 * * ? *)"
+            ScheduleExpressionTimezone: Asia/Taipei
+            State: ENABLED
+            Input: '{"mode": "sync"}'
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 3600
+        NotifySchedule:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: "cron(0 10 * * ? *)"
+            ScheduleExpressionTimezone: Asia/Taipei
+            State: ENABLED
+            Input: '{"mode": "notify"}'
+            RetryPolicy:
+              MaximumRetryAttempts: 2
+              MaximumEventAgeInSeconds: 3600
     Metadata:
       Dockerfile: Dockerfile
       DockerContext: ../
       DockerTag: scheduler
+
+  PipelineAlarmsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub "${AppName}-pipeline-alarms"
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref PipelineAlarmsTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  SchedulerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AppName}-scheduler-errors"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SchedulerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref PipelineAlarmsTopic]
+
+  ProcessorErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AppName}-processor-errors"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref ProcessorFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref PipelineAlarmsTopic]
+
+  SchedulerDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AppName}-scheduler-duration"
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SchedulerFunction
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 250000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref PipelineAlarmsTopic]
 
 Outputs:
   WebhookUrl:

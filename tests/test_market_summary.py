@@ -231,6 +231,41 @@ def test_push_daily_summary_send_failure_does_not_stop_other_subscribers(push_mo
     assert push_mocks["send"].call_count == 2
 
 
+def test_push_daily_summary_refresh_false_skips_news_refetch(push_mocks, monkeypatch):
+    ms.refresh_news(days_back=1)  # seed the store, as if the 08:00 sync stage already ran
+    fake_refresh = MagicMock()
+    monkeypatch.setattr(ms, "refresh_news", fake_refresh)
+
+    ms.push_daily_summary(refresh=False)
+
+    fake_refresh.assert_not_called()
+    assert push_mocks["send"].call_count == 2
+
+
+def test_push_daily_summary_is_idempotent_per_summary_date(push_mocks):
+    ms.push_daily_summary()
+    assert push_mocks["send"].call_count == 2
+
+    # Same day rerun: every subscriber already notified, no duplicate sends.
+    ms.push_daily_summary()
+    assert push_mocks["send"].call_count == 2
+
+
+def test_push_daily_summary_send_failure_is_not_marked_notified_and_retries(push_mocks):
+    push_mocks["send"].side_effect = [RuntimeError("telegram down"), None]
+
+    ms.push_daily_summary()
+    assert push_mocks["send"].call_count == 2
+
+    # Rerun same day: "222" already notified and skipped; "111" (failed
+    # last time, never marked) retries.
+    push_mocks["send"].side_effect = None
+    ms.push_daily_summary()
+    assert push_mocks["send"].call_count == 3
+    chat_ids = {call.args[0] for call in push_mocks["send"].call_args_list}
+    assert chat_ids == {"111", "222"}
+
+
 def test_push_daily_summary_end_to_end_on_dynamodb_backend(
     aws, mock_finnhub, mock_groq, mock_quotes, monkeypatch
 ):
@@ -256,3 +291,23 @@ def test_push_daily_summary_end_to_end_on_dynamodb_backend(
     stored = get_backend().list_news_since("2000-01-01T00:00:00+00:00")
     assert len(stored) > 0
     assert all(row["id"] == row["headline"] for row in stored)
+
+
+def test_push_daily_summary_is_idempotent_on_dynamodb_backend(
+    aws, mock_finnhub, mock_groq, mock_quotes, monkeypatch
+):
+    from agent.db.subscribers import subscribe
+
+    mock_groq.chat.completions.create.return_value = _text_response(
+        "*📊 Big 7 動態* 摘要內容"
+    )
+    fake_send = MagicMock()
+    monkeypatch.setattr(ms, "send_message", fake_send)
+    subscribe("111")
+
+    ms.push_daily_summary()
+    assert fake_send.call_count == 1
+
+    # Same day rerun: already notified, no duplicate push.
+    ms.push_daily_summary()
+    assert fake_send.call_count == 1

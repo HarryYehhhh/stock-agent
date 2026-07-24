@@ -63,6 +63,10 @@ class StorageBackend(Protocol):
     pipeline runs against both backends). `export_rows` remains local-only and
     is intentionally excluded — it is only used by the local→DynamoDB upload
     tool.
+
+    `summary_notified` / `mark_summary_notified` reuse the earnings
+    notification-idempotency table to dedupe daily market-summary pushes
+    (ADR-0007 §4).
     """
 
     def save_message(self, chat_id: str, role: str, content: str) -> None: ...
@@ -102,6 +106,10 @@ class StorageBackend(Protocol):
     def mark_notified(
         self, chat_id: str, symbols: list[str], earning_date: str
     ) -> None: ...
+
+    def summary_notified(self, chat_id: str, summary_date: str) -> bool: ...
+
+    def mark_summary_notified(self, chat_id: str, summary_date: str) -> None: ...
 
     def get_company_summary(self, symbol: str, earning_date: str) -> str | None: ...
 
@@ -570,6 +578,30 @@ class LocalSQLiteBackend:
                 [(chat_id, symbol, earning_date, sent_at) for symbol in symbols],
             )
 
+    def summary_notified(self, chat_id: str, summary_date: str) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT 1 FROM earnings_notifications
+                WHERE chat_id = ? AND symbol = '__market_summary__' AND earning_date = ?
+                """,
+                (chat_id, summary_date),
+            ).fetchone()
+        return row is not None
+
+    def mark_summary_notified(self, chat_id: str, summary_date: str) -> None:
+        sent_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO earnings_notifications (
+                    chat_id, symbol, earning_date, sent_at
+                )
+                VALUES (?, ?, ?, ?)
+                """,
+                (chat_id, "__market_summary__", summary_date, sent_at),
+            )
+
     def get_company_summary(self, symbol: str, earning_date: str) -> str | None:
         with self._connect() as conn:
             row = conn.execute(
@@ -1022,6 +1054,27 @@ class DynamoDBBackend:
             except ClientError as e:
                 if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
                     raise
+
+    def summary_notified(self, chat_id: str, summary_date: str) -> bool:
+        resp = self._earnings_notifications.get_item(
+            Key={"chat_id": chat_id, "notify_key": f"market-summary#{summary_date}"}
+        )
+        return "Item" in resp
+
+    def mark_summary_notified(self, chat_id: str, summary_date: str) -> None:
+        ttl = int(time.time()) + EARNINGS_NOTIFICATIONS_TTL_SECONDS
+        try:
+            self._earnings_notifications.put_item(
+                Item={
+                    "chat_id": chat_id,
+                    "notify_key": f"market-summary#{summary_date}",
+                    "ttl": ttl,
+                },
+                ConditionExpression="attribute_not_exists(notify_key)",
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ConditionalCheckFailedException":
+                raise
 
     def get_company_summary(self, symbol: str, earning_date: str) -> str | None:
         resp = self._company_summaries.get_item(

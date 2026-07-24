@@ -1,9 +1,18 @@
 """EventBridge Scheduler Lambda: daily earnings sync + notify + market summary.
 
-Cloud (`STORAGE_BACKEND=dynamodb`) runs the full daily pipeline in a single
-Lambda invocation via `handler()`: sync earnings → notify tomorrow's watchlist
-earnings → push the daily market summary. All three stages read/write
-DynamoDB (ADR-0006).
+Cloud (`STORAGE_BACKEND=dynamodb`) splits the daily pipeline across two
+EventBridge Scheduler events, each invoking `handler()` with a distinct
+`mode` payload (ADR-0007):
+- `{"mode": "sync"}` (08:00 Asia/Taipei): fetch/write stages only — sync
+  earnings calendar and refresh Big7/AI news into DynamoDB.
+- `{"mode": "notify"}` (10:00 Asia/Taipei): read/notify stages only — push
+  tomorrow's watchlist earnings notifications, then the daily market summary
+  (without re-fetching news; the 08:00 sync already did that).
+
+A missing or unknown `mode` is a fail-fast: `handler()` raises before running
+any stage, so a scheduler misconfiguration (e.g. a dropped `Input` payload)
+surfaces as a Lambda `Errors` metric instead of silently running the wrong
+stage at the wrong time.
 
 Local (launchd) splits the same pipeline across separate cron jobs/make
 targets instead of a single invocation:
@@ -26,7 +35,7 @@ from aws_lambda_powertools import Logger
 
 from agent.agent import run_agent
 from agent.db.backend import get_backend
-from agent.market_summary import push_daily_summary
+from agent.market_summary import push_daily_summary, refresh_news
 from agent.telegram_client import send_message
 from agent.tools.earnings import get_earnings_calendar
 
@@ -157,14 +166,12 @@ def _run() -> None:
     _notify_local(tomorrow)
 
 
-@logger.inject_lambda_context
-def handler(event: dict, context) -> dict:
-    """Cloud daily pipeline entry point: sync → notify → market summary.
+def _run_sync() -> None:
+    """Cloud sync-mode stage (08:00 Asia/Taipei): fetch/write only.
 
     Each stage is independently try/except'd so one stage's failure doesn't
-    block the others (e.g. a summary failure shouldn't swallow earnings
-    notifications already sent). If any stage failed, re-raise after all
-    stages have run so the invocation counts toward Lambda's `Errors` metric.
+    block the other. If either failed, re-raise after both have run so the
+    invocation counts toward Lambda's `Errors` metric.
     """
     failed = False
 
@@ -175,19 +182,58 @@ def handler(event: dict, context) -> dict:
         failed = True
 
     try:
+        refresh_news(days_back=1)
+    except Exception:
+        logger.exception("refresh_news stage failed")
+        failed = True
+
+    if failed:
+        raise RuntimeError("sync pipeline had at least one failed stage")
+
+
+def _run_notify() -> None:
+    """Cloud notify-mode stage (10:00 Asia/Taipei): read DynamoDB → Groq →
+    Telegram push. Does not re-fetch news; the 08:00 sync already did that.
+
+    Same fail-fast-after-completion semantics as `_run_sync()`.
+    """
+    failed = False
+
+    try:
         _run()
     except Exception:
         logger.exception("notify stage failed")
         failed = True
 
     try:
-        push_daily_summary()
+        push_daily_summary(refresh=False)
     except Exception:
         logger.exception("push_daily_summary stage failed")
         failed = True
 
     if failed:
-        raise RuntimeError("scheduler pipeline had at least one failed stage")
+        raise RuntimeError("notify pipeline had at least one failed stage")
+
+
+@logger.inject_lambda_context
+def handler(event: dict, context) -> dict:
+    """Cloud entry point: dispatch to the sync or notify stage by
+    `event["mode"]`.
+
+    A missing or unknown mode is a fail-fast: this raises before running any
+    stage (ADR-0007 §2), so a scheduler misconfiguration is visible as a
+    Lambda `Errors` metric rather than silently running the wrong stage at
+    the wrong time.
+    """
+    mode = event.get("mode") if isinstance(event, dict) else None
+
+    if mode == "sync":
+        _run_sync()
+    elif mode == "notify":
+        _run_notify()
+    else:
+        raise ValueError(f"unknown scheduler mode: {mode!r}; expected 'sync' or 'notify'")
+
     return {"statusCode": 200}
 
 

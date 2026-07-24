@@ -1,5 +1,11 @@
 version = 0.1
 
+# AlarmEmail is required at deploy time (SNS email subscription for pipeline
+# failure alarms). Do not commit a real address here. Provide it either via
+# CLI: `make deploy GUIDED=1` prompts for it, or
+# `sam deploy --parameter-overrides AlarmEmail=<email>`; or uncomment and set
+# a placeholder-free value locally (never commit):
+# parameter_overrides = "AlarmEmail=you@example.com"
 [default.deploy.parameters]
 stack_name = "earnings-agent"
 region = "ap-northeast-1"
