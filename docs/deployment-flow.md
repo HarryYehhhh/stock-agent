@@ -152,3 +152,43 @@ make logs-scheduler   # 查看 Scheduler Lambda 日誌
 make dev    # 啟動 FastAPI 本地伺服器（port 8080）
 make test   # 執行測試（使用 moto mock AWS 服務）
 ```
+
+### 本地開發 webhook 切換
+
+Telegram webhook 是全域設定，本地開發期間可暫時把它切到 ngrok，讓 Telegram 訊息直接打到本機 FastAPI 伺服器，測完再切回雲端。
+
+1. **啟動本機伺服器**
+
+   ```bash
+   make dev
+   ```
+
+2. **另開一個終端機，用 ngrok 對外暴露本機 8080 port**
+
+   ```bash
+   ngrok http 8080
+   ```
+
+   記下 ngrok 顯示的 HTTPS URL（如 `https://xxxx.ngrok-free.app`）。
+
+3. **把 Telegram webhook 切到本機**
+
+   ```bash
+   make set-webhook-local WEBHOOK_URL=https://xxxx.ngrok-free.app
+   ```
+
+   此指令會呼叫 Telegram `setWebhook` API，將 webhook 指向 `<WEBHOOK_URL>/webhook`，並帶上 `secret_token`（`TELEGRAM_WEBHOOK_SECRET`），本地 `webhook_handler` 會驗證此 secret，因此本地測試也必須帶。
+
+4. **在 Telegram 傳訊息測試**，觀察本機 `make dev` 的 log 輸出確認訊息有進來。
+
+5. **測完切回雲端 webhook**
+
+   ```bash
+   make set-webhook WEBHOOK_URL=<API Gateway URL>
+   ```
+
+   或若暫時不需要任何 webhook，可單純解除：
+
+   ```bash
+   make delete-webhook
+   ```

@@ -171,3 +171,61 @@ def test_generate_summary_skips_groq_when_store_empty(local_store, mock_groq, mo
     assert out["summary"].startswith("*📈 大盤收盤指標*")
     assert "請先執行新聞抓取" in out["summary"]
     mock_groq.chat.completions.create.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# push_daily_summary: CLI/cron entry
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def push_mocks(local_store, mock_finnhub, mock_groq, mock_quotes, monkeypatch):
+    from agent.db.subscribers import subscribe
+
+    mock_groq.chat.completions.create.return_value = _text_response("*📊 Big 7 動態* 摘要內容")
+    fake_send = MagicMock()
+    monkeypatch.setattr(ms, "send_message", fake_send)
+    subscribe("111")
+    subscribe("222")
+    return {"send": fake_send}
+
+
+def test_push_daily_summary_sends_to_all_active_subscribers(push_mocks):
+    ms.push_daily_summary()
+
+    assert push_mocks["send"].call_count == 2
+    chat_ids = {call.args[0] for call in push_mocks["send"].call_args_list}
+    assert chat_ids == {"111", "222"}
+    for call in push_mocks["send"].call_args_list:
+        assert "*📊 Big 7 動態* 摘要內容" in call.args[1]
+
+
+def test_push_daily_summary_skips_send_when_no_news(local_store, mock_groq, mock_quotes, monkeypatch):
+    from agent.db.subscribers import subscribe
+
+    fake_send = MagicMock()
+    monkeypatch.setattr(ms, "send_message", fake_send)
+    subscribe("111")
+
+    ms.push_daily_summary()
+
+    fake_send.assert_not_called()
+    mock_groq.chat.completions.create.assert_not_called()
+
+
+def test_push_daily_summary_skips_send_when_no_subscribers(local_store, mock_finnhub, mock_groq, mock_quotes, monkeypatch):
+    mock_groq.chat.completions.create.return_value = _text_response("*📊 Big 7 動態* 摘要內容")
+    fake_send = MagicMock()
+    monkeypatch.setattr(ms, "send_message", fake_send)
+
+    ms.push_daily_summary()
+
+    fake_send.assert_not_called()
+
+
+def test_push_daily_summary_send_failure_does_not_stop_other_subscribers(push_mocks):
+    push_mocks["send"].side_effect = [RuntimeError("telegram down"), None]
+
+    ms.push_daily_summary()
+
+    assert push_mocks["send"].call_count == 2

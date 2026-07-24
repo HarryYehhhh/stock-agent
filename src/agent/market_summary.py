@@ -17,6 +17,8 @@ from datetime import date, datetime, timedelta, timezone
 from agent.agent import MODEL, _client
 from agent.config import finnhub_api_key
 from agent.db.backend import get_backend
+from agent.db.subscribers import get_all_active
+from agent.telegram_client import send_message
 from agent.tools._http import client
 from agent.tools.quote import get_quote
 
@@ -256,3 +258,32 @@ def generate_market_summary(days_back: int = 1) -> dict:
     news_ids = [it["id"] for it in news["big7"] + news["ai"]]
     summary_id = get_backend().insert_market_summary(summary, news_ids)
     return {"summary": summary, "summary_id": summary_id, "news": news, "indexes": indexes}
+
+
+def push_daily_summary() -> None:
+    """CLI/cron entry: refresh Big 7 / AI news, generate the daily summary,
+    then push it to every active subscriber. Skips the push (but still
+    refreshes/generates) when there is no news to summarize. A single
+    subscriber's send failure does not stop the others."""
+    refresh_news(days_back=1)
+    result = generate_market_summary(days_back=1)
+
+    if not result["news"]["big7"] and not result["news"]["ai"]:
+        log.info("no news to summarize, skip push")
+        return
+
+    subscribers = get_all_active()
+    if not subscribers:
+        log.info("no active subscribers, skip push")
+        return
+
+    for chat_id in subscribers:
+        try:
+            send_message(chat_id, result["summary"])
+        except Exception:
+            log.exception("failed to push market summary to %s", chat_id)
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+    push_daily_summary()
