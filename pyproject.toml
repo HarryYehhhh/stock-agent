@@ -17,6 +17,7 @@ dev = [
     "moto[dynamodb,sqs]>=5.0.0",
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
+    "python-dotenv>=1.2.2",
 ]
 
 [tool.pytest.ini_options]

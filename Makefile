@@ -17,7 +17,7 @@ dev:
 	cp -n .env.example .env || true
 	mkdir -p logs
 	@echo "=== dev start $$(date '+%Y-%m-%d %H:%M:%S') ===" >> logs/dev.log
-	PYTHONUNBUFFERED=1 uv run uvicorn agent.local_server:app --reload --port 8080 2>&1 | tee -a logs/dev.log
+	PYTHONUNBUFFERED=1 uv run uvicorn agent.local_server:app --reload --port 8080 --env-file .env 2>&1 | tee -a logs/dev.log
 
 notify-earnings:
 	PYTHONPATH=src uv run python -m agent.scheduler_handler

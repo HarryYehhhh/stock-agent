@@ -15,7 +15,9 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
-## 2026-07-24 — sync-local-to-dynamodb — evaluator — ✅ Pass
+## 2026-07-24 — dev-env-file — evaluator — ✅ Pass
+- 連結：docs/qa-reports/dev-env-file.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 148 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 160 passed, 0 failed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。無正式 contract，對照需求驗收：`make dev` 加 `--env-file .env`（Makefile:20）+ `python-dotenv` 補進 dev deps（確認修復前 lockfile 確實缺此依賴）+ 新增 `tests/test_dev_env_file.py` 先重現 `KeyError` bug 再驗證 `uvicorn.Config(env_file=...)` 修法有效（已讀 uvicorn 原始碼確認此路徑與 CLI `--env-file` 等價）；diff 完全手術式，僅 Makefile/pyproject.toml/uv.lock/新測試檔；python-dotenv 正確限定在 dev group，不影響走 SSM 的 production Lambda。
 - 連結：docs/qa-reports/sync-local-to-dynamodb.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 146 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 158 passed, 0 failed；🔴 0、🟡 1（ADR-0004 §9 記載 upload_local_store 不搬 earnings_calendar/company_summaries，本次依使用者新指示推翻，ADR 文件未同步更新註記，屬文件與現況不一致但不阻塞）；🟢 2；循環次數 1；未解 P0/P1 0。無正式 contract，對照使用者需求驗收：`NewsTable`（PK=headline 去重、GSI published-at-index 支援近期查詢、TTL）+ SchedulerFunction 補 `State: DISABLED`（未動 IAM）+ `upload_local_store.py` 擴充 earnings_calendar/company_summaries/news（Decimal 轉換與既有 DynamoDBBackend 手法一致、TTL 對齊 backend.py 常數、nullable 欄位省略寫入、冪等由 put_item overwrite-by-key 保證且有專屬測試驗證）+ `sync-dynamodb` make target 串接 run-daily.sh 第四步（風格與既有三步一致）+ moto 測試新增 test-news 表與冪等測試；排除項（market_summaries 不同步、DynamoDBBackend 不新增 news 讀取方法、不執行 make deploy）皆核實遵守；範圍手術式，僅 9 個檔案改動且逐一對應需求。
 
