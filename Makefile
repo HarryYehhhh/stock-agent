@@ -17,7 +17,7 @@ dev:
 	cp -n .env.example .env || true
 	mkdir -p logs
 	@echo "=== dev start $$(date '+%Y-%m-%d %H:%M:%S') ===" >> logs/dev.log
-	PYTHONUNBUFFERED=1 uv run uvicorn agent.local_server:app --reload --port 8080 2>&1 | tee -a logs/dev.log
+	PYTHONUNBUFFERED=1 uv run uvicorn agent.local_server:app --reload --port 8080 --env-file .env 2>&1 | tee -a logs/dev.log
 
 # 一鍵健檢 local-first 模式下 bot 是否健康：本地 server / ngrok tunnel /
 # Telegram webhook / 金鑰 / Groq API。唯讀，不寫 DB 也不發訊息。

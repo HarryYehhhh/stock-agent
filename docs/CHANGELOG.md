@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-24 — dev-env-file — evaluator — ✅ Pass
+- 連結：docs/qa-reports/dev-env-file.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 148 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 160 passed, 0 failed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。無正式 contract，對照需求驗收：`make dev` 加 `--env-file .env`（Makefile:20）+ `python-dotenv` 補進 dev deps（確認修復前 lockfile 確實缺此依賴）+ 新增 `tests/test_dev_env_file.py` 先重現 `KeyError` bug 再驗證 `uvicorn.Config(env_file=...)` 修法有效（已讀 uvicorn 原始碼確認此路徑與 CLI `--env-file` 等價）；diff 完全手術式，僅 Makefile/pyproject.toml/uv.lock/新測試檔；python-dotenv 正確限定在 dev group，不影響走 SSM 的 production Lambda。
+
 ## 2026-07-24 — check-bot — evaluator — ✅ Pass
 - 連結：docs/qa-reports/check-bot.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 176 passed/12 errors（既有 `test_local_integration.py` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 188 passed, 0 failed（30 新測試皆針對純函式，不碰網路）；🔴 0、🟡 0（🟢 1：`probe_groq` 例外訊息截斷後印出，目前實測不含金鑰值但長期風險留意）；循環次數 1；未解 P0/P1 0。無正式 contract，對照使用者需求驗收：五項健檢（本地 server／ngrok tunnel／Telegram webhook／金鑰／Groq）皆逐項對應 PASS/FAIL/WARN 分類規則；純判斷邏輯（`classify_server_probe`／`find_ngrok_public_url`／`webhook_url_matches`／`is_placeholder`／`mask_key_status`／`webhook_info_warnings`）與 I/O 探測分離；所有網路呼叫皆設 10s timeout；`run_checks()` 雙層 try/except 確保單項失敗不中斷後續；`scripts/check-bot.sh` 無 `set -e`；exit code 規則（有 FAIL 非 0、全 PASS/WARN 為 0）已用真實 `.env` 實跑 `make check-bot` 驗證（0 FAIL、1 WARN、exit 0）；金鑰安全審查逐路徑確認 `mask_key_status`／`check_secrets`／`probe_telegram_webhook`（webhook URL 不含 bot token）／`probe_groq`（實測假金鑰觸發 401，錯誤訊息不含金鑰值）皆未洩漏原值；唯讀確認無任何 DB 寫入或 Telegram 發訊呼叫；smoke-test 用 `.env` 已核實透過 `git check-ignore` 命中 `.gitignore` 規則、未進版控。
