@@ -124,7 +124,10 @@ def test_processor_subscribe_and_scheduler_share_local_store(local_store, monkey
 
     processor_handler._process_update({"message": {"chat": {"id": 777}, "text": "/subscribe"}})
     assert scheduler_handler.sync_earnings() == []
-    assert scheduler_handler.handler({}, CTX) == {"statusCode": 200}
+    # notify mode only (ADR-0007 split); refresh=False avoids a real Finnhub
+    # call from push_daily_summary, and the empty local news store makes it
+    # a no-op push (no Groq call).
+    assert scheduler_handler.handler({"mode": "notify"}, CTX) == {"statusCode": 200}
 
     assert fake_send.call_args_list[-1].args[0] == "777"
     assert "summary" in fake_send.call_args_list[-1].args[1]

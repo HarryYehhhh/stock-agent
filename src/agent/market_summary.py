@@ -260,12 +260,20 @@ def generate_market_summary(days_back: int = 1) -> dict:
     return {"summary": summary, "summary_id": summary_id, "news": news, "indexes": indexes}
 
 
-def push_daily_summary() -> None:
-    """CLI/cron entry: refresh Big 7 / AI news, generate the daily summary,
-    then push it to every active subscriber. Skips the push (but still
-    refreshes/generates) when there is no news to summarize. A single
-    subscriber's send failure does not stop the others."""
-    refresh_news(days_back=1)
+def push_daily_summary(refresh: bool = True) -> None:
+    """CLI/cron entry: optionally refresh Big 7 / AI news, generate the daily
+    summary, then push it to every active subscriber not already notified for
+    today. Skips the push (but still generates) when there is no news to
+    summarize. A single subscriber's send failure does not stop the others
+    and does not mark that subscriber notified, so a retry can resend to
+    them without re-sending to already-notified subscribers (ADR-0007 §4).
+
+    `refresh=False` skips `refresh_news` (used by the cloud notify-mode
+    stage, which runs after a separate sync-mode stage already refreshed the
+    news); the default `refresh=True` keeps local `make daily-summary`
+    behavior unchanged."""
+    if refresh:
+        refresh_news(days_back=1)
     result = generate_market_summary(days_back=1)
 
     if not result["news"]["big7"] and not result["news"]["ai"]:
@@ -277,11 +285,17 @@ def push_daily_summary() -> None:
         log.info("no active subscribers, skip push")
         return
 
+    backend = get_backend()
+    summary_date = date.today().isoformat()
     for chat_id in subscribers:
+        if backend.summary_notified(chat_id, summary_date):
+            continue
         try:
             send_message(chat_id, result["summary"])
         except Exception:
             log.exception("failed to push market summary to %s", chat_id)
+            continue
+        backend.mark_summary_notified(chat_id, summary_date)
 
 
 if __name__ == "__main__":

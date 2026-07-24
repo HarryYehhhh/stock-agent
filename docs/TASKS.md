@@ -58,14 +58,23 @@
 - **重要**：schedule **維持 `DISABLED`**，故本 PR 對 production **無行為變更**，可獨立 deploy 無風險。
 - **不含**：SNS/alarm、schedule ENABLE、deploy。
 
-### PR-B — Observability + schedule ENABLE（走 `sprint` skill；go-live PR）
-- **相依**：PR-A 合併。
-- **範圍**：
-  - SNS Topic + email subscription（email 位址以 SAM parameter 參數化，可搭 SSM，不 hardcode）。
-  - CloudWatch Alarm：至少 `SchedulerFunction` 與 `ProcessorFunction` 的 Lambda `Errors` → SNS；（可選）scheduler duration 逼近 300s timeout、Telegram push 失敗。
-  - `SchedulerFunction` `ScheduleV2`：`DISABLED` → `ENABLED`，`ScheduleExpressionTimezone: Asia/Taipei` + `cron(30 10 * * ? *)`（沿用現行本地 10:30 台北，Phase 1 已驗證；確切時間可於本 PR 與使用者最終確認，預設＝保留 10:30）。
+### PR-B — Observability + schedule ENABLE（走 `sprint` skill；go-live PR）✅ spec/contract/ADR 已出
+- **spec**：`docs/specs/observability-golive.md`；**contract**：`docs/contracts/observability-golive-sprint.md`；**方向決策**：`docs/decisions/0007-schedule-split-observability-golive.md`（ADR-0007，部分取代 ADR-0006 §5/§7）
+- **相依**：PR-A 合併（已在工作樹）。
+- **範圍（ADR-0007 定案）**：
+  - **排程拆兩個**（同一 `SchedulerFunction`、Input payload 分流 mode）：`SyncSchedule` `cron(0 8 * * ? *)` `Asia/Taipei` `{"mode":"sync"}`（sync_earnings + news 抓取，Finnhub 寫 DynamoDB）；`NotifySchedule` `cron(0 10 * * ? *)` `Asia/Taipei` `{"mode":"notify"}`（財報通知 + 大盤摘要，讀庫→Groq→Telegram）。兩者 `State: ENABLED`。缺/未知 mode → handler fail-fast raise。
+  - **自動重試**：兩排程 `RetryPolicy` `MaximumRetryAttempts: 2` / `MaximumEventAgeInSeconds: 3600`。
+  - **摘要冪等 guard**：`push_daily_summary` 推播補 per-(subscriber,date) 去重（複用 `earnings_notifications` 表，不新增表），使 notify 重試不重複推播摘要（earnings 已冪等）。
+  - **SNS + alarm**：`PipelineAlarmsTopic` + email subscription（`AlarmEmail` SAM Parameter，不 hardcode）；CloudWatch Alarms：SchedulerFunction Errors、ProcessorFunction Errors、SchedulerFunction Duration(≥250s) → SNS。
 - **硬需求**：observability 與 schedule ENABLE 綁同一 PR——第一次雲端 run（＝ENABLE）起就要能觀測失敗（ADR-0006 §6）。
 - **雙推風險**：ENABLE 後若本地 launchd 仍跑會重複推播（冪等 store 分屬兩 backend、不共用）。故本 PR 的 cutover 部署必須與「停本地 launchd」協調（見 Phase 3）。
+- **不含**：`make deploy`、部署後驗證、email 確認、停 launchd（皆 Phase 3）；schedule DLQ、Telegram 失敗 log alarm、摘要冪等專用表（ADR-0007 已評估未採）。
+
+### PR-B cutover 順序（go-live，屬 Phase 3 ops）
+1. **先停本地 launchd**（10:30 pipeline + 00:00 downsync）。
+2. 再 `make deploy`（含 ENABLE + SNS/alarm），deploy 時提供 `AlarmEmail`（`--parameter-overrides` 或 samconfig，真實信箱不進版控）。
+3. 部署後點 email 中的 SNS 訂閱確認連結；`make logs-scheduler` 觀察首次 08:00 sync / 10:00 notify、確認無雙推、確認 alarm 管道可通。
+> 順序不可顛倒：先停 launchd 再部署 ENABLE，避免雙推窗口。
 
 ### Phase 3 ops（infra-engineer / 使用者；不在 code PR 內）
 - 停本地 launchd（daily 10:30 pipeline + 00:00 downsync；downsync 上雲後失去用途）。

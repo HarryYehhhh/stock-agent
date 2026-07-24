@@ -24,7 +24,7 @@ TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 
 
 # ---------------------------------------------------------------------------
-# handler(): cloud (dynamodb) full pipeline — sync → notify → market summary
+# handler(): cloud (dynamodb) mode dispatch — sync vs notify (ADR-0007)
 # ---------------------------------------------------------------------------
 
 
@@ -32,34 +32,72 @@ TOMORROW = (date.today() + timedelta(days=1)).isoformat()
 def pipeline_mocks(monkeypatch):
     monkeypatch.setenv("STORAGE_BACKEND", "dynamodb")
     fake_sync = MagicMock(return_value=[])
+    fake_refresh_news = MagicMock(return_value=0)
     fake_run = MagicMock()
     fake_push = MagicMock()
 
     monkeypatch.setattr(scheduler_handler, "sync_earnings", fake_sync)
+    monkeypatch.setattr(scheduler_handler, "refresh_news", fake_refresh_news)
     monkeypatch.setattr(scheduler_handler, "_run", fake_run)
     monkeypatch.setattr(scheduler_handler, "push_daily_summary", fake_push)
 
-    return {"sync": fake_sync, "run": fake_run, "push": fake_push}
+    return {
+        "sync": fake_sync,
+        "refresh_news": fake_refresh_news,
+        "run": fake_run,
+        "push": fake_push,
+    }
 
 
-def test_handler_runs_all_three_stages_and_returns_200(pipeline_mocks):
-    result = scheduler_handler.handler({}, CTX)
+def test_handler_sync_mode_runs_only_fetch_write_stages(pipeline_mocks):
+    result = scheduler_handler.handler({"mode": "sync"}, CTX)
 
     assert result == {"statusCode": 200}
     pipeline_mocks["sync"].assert_called_once()
+    pipeline_mocks["refresh_news"].assert_called_once_with(days_back=1)
+    pipeline_mocks["run"].assert_not_called()
+    pipeline_mocks["push"].assert_not_called()
+
+
+def test_handler_notify_mode_runs_only_notify_stages_without_refresh(pipeline_mocks):
+    result = scheduler_handler.handler({"mode": "notify"}, CTX)
+
+    assert result == {"statusCode": 200}
+    pipeline_mocks["sync"].assert_not_called()
+    pipeline_mocks["refresh_news"].assert_not_called()
     pipeline_mocks["run"].assert_called_once()
-    pipeline_mocks["push"].assert_called_once()
+    pipeline_mocks["push"].assert_called_once_with(refresh=False)
 
 
-def test_handler_stage_failure_does_not_block_other_stages_but_raises(pipeline_mocks):
+@pytest.mark.parametrize("event", [{}, {"mode": "foo"}, {"mode": None}])
+def test_handler_missing_or_unknown_mode_raises_before_any_stage(pipeline_mocks, event):
+    with pytest.raises(ValueError):
+        scheduler_handler.handler(event, CTX)
+
+    pipeline_mocks["sync"].assert_not_called()
+    pipeline_mocks["refresh_news"].assert_not_called()
+    pipeline_mocks["run"].assert_not_called()
+    pipeline_mocks["push"].assert_not_called()
+
+
+def test_handler_sync_mode_stage_failure_does_not_block_other_stage_but_raises(pipeline_mocks):
+    pipeline_mocks["sync"].side_effect = RuntimeError("sync boom")
+
+    with pytest.raises(Exception):
+        scheduler_handler.handler({"mode": "sync"}, CTX)
+
+    pipeline_mocks["sync"].assert_called_once()
+    pipeline_mocks["refresh_news"].assert_called_once_with(days_back=1)
+
+
+def test_handler_notify_mode_stage_failure_does_not_block_other_stage_but_raises(pipeline_mocks):
     pipeline_mocks["run"].side_effect = RuntimeError("notify boom")
 
     with pytest.raises(Exception):
-        scheduler_handler.handler({}, CTX)
+        scheduler_handler.handler({"mode": "notify"}, CTX)
 
-    pipeline_mocks["sync"].assert_called_once()
     pipeline_mocks["run"].assert_called_once()
-    pipeline_mocks["push"].assert_called_once()
+    pipeline_mocks["push"].assert_called_once_with(refresh=False)
 
 
 def test_notify_live_removed():
@@ -186,6 +224,27 @@ def test_local_warns_when_cache_is_stale(local_mocks, local_store):
     assert "⚠️" in body
     assert "最後同步" in body
     assert "2020-01-01" in body
+
+
+def test_handler_notify_mode_stale_banner_still_applies_after_split(
+    local_mocks, local_store, monkeypatch
+):
+    """Regression: notify mode's earnings stage reuses `_run()`, so the
+    existing `_is_stale`/`_stale_banner` behavior still fires post-split."""
+    fake_push = MagicMock()
+    monkeypatch.setattr(scheduler_handler, "push_daily_summary", fake_push)
+    _seed_earnings(["AAPL"])
+    with sqlite3.connect(local_store) as conn:
+        conn.execute(
+            "UPDATE earnings_calendar SET updated_at = '2020-01-01T00:00:00+00:00'"
+        )
+
+    scheduler_handler.handler({"mode": "notify"}, CTX)
+
+    body = local_mocks["send"].call_args.args[1]
+    assert "⚠️" in body
+    assert "最後同步" in body
+    fake_push.assert_called_once_with(refresh=False)
 
 
 def test_local_skips_when_no_cached_earnings(local_mocks):

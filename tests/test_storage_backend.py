@@ -192,6 +192,39 @@ def test_watchlist_earnings_join_and_notification_tracking(local_store):
     assert backend.unnotified_symbols("222", symbols, "2026-07-23") == symbols
 
 
+def test_summary_notified_idempotency(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+
+    assert backend.summary_notified("111", "2026-07-23") is False
+    backend.mark_summary_notified("111", "2026-07-23")
+    assert backend.summary_notified("111", "2026-07-23") is True
+
+    # Different chat_id / date are unaffected.
+    assert backend.summary_notified("222", "2026-07-23") is False
+    assert backend.summary_notified("111", "2026-07-24") is False
+
+    # Re-marking must not raise (retry-safe).
+    backend.mark_summary_notified("111", "2026-07-23")
+    assert backend.summary_notified("111", "2026-07-23") is True
+
+
+def test_summary_notified_does_not_collide_with_earnings_notifications(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    earning_date = "2026-07-23"
+
+    # A real earnings notification must not make the summary sentinel look notified.
+    backend.mark_notified("111", ["AAPL"], earning_date)
+    assert backend.summary_notified("111", earning_date) is False
+
+    # The summary sentinel must not make an unrelated real symbol look notified.
+    backend.mark_summary_notified("111", earning_date)
+    assert backend.unnotified_symbols("111", ["NVDA"], earning_date) == ["NVDA"]
+
+
 def test_insert_news_returns_distinct_inserted_count_not_attempted_count(local_store):
     from agent.db.backend import get_backend
 
