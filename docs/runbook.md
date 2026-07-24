@@ -46,6 +46,18 @@ make ddb-count TABLE=subscribers   # 只算筆數
 
 可覆寫 `REGION` / `DDB_PREFIX`；`ddb-scan` 單次 scan 上限 1MB，大表僅回第一頁。輸出可再接 jq 篩選，例：`make ddb-scan TABLE=subscribers | jq '[.[] | select(.active)]'`。
 
+## ECR lifecycle policy
+
+三個 ECR repo（`processorfunction*repo` / `schedulerfunction*repo` / `webhookfunction*repo`）是 `sam deploy --resolve-image-repos` 建立的 companion stack repo，不在 `infra/template.yaml` 內——SAM 是「先推 image 再建主 stack」，若在同一個 template 定義這些 repo 會造成循環依賴，因此無法搬進 IaC 管理。
+
+沒有 lifecycle policy 時每次 build 都會累積新 image（ECR 費用 $0.10/GB-月），曾一路堆到 89 個舊 image、約 $0.15/月。做法是直接對既有 repo 呼叫 `aws ecr put-lifecycle-policy` 掛上 policy——policy 是掛在 repo 資源上、一次套用永久有效，不需要每次 deploy 重掛。
+
+```bash
+make ecr-lifecycle    # 對所有 earningsagente* repo 套用 infra/ecr-lifecycle-policy.json（保留最近 3 個 image，其餘 expire）
+```
+
+若 stack 重建（repo hash 會改變、產生新 repo 名稱），要重跑 `make ecr-lifecycle` 讓新 repo 也掛上 policy。ECR 對已標記為 expire 的 image 是非同步清理，套用 policy 後最多 24 小時才會實際刪除，不會馬上生效。
+
 ## 已知陷阱
 
 - Telegram webhook URL 必須包含 `/prod/webhook`，少了 `/prod` 會 404；API Gateway 404 時 Lambda 不會有新 log。

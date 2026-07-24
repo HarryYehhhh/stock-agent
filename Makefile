@@ -1,4 +1,4 @@
-.PHONY: install test lint dev check-bot notify-earnings sync-earnings daily-summary sync-dynamodb sync-from-dynamodb build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
+.PHONY: install test lint dev check-bot notify-earnings sync-earnings daily-summary sync-dynamodb sync-from-dynamodb build deploy ecr-lifecycle set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
 
 REGION ?= ap-northeast-1
 STACK ?= earnings-agent
@@ -44,6 +44,16 @@ build:
 
 deploy:
 	cd infra && sam deploy --stack-name $(STACK) --region $(REGION) --capabilities CAPABILITY_IAM --resolve-image-repos --resolve-s3 $(if $(GUIDED),--guided,)
+
+# 為 SAM companion stack 自動建立的 ECR repo 掛上 lifecycle policy（只保留最近 3 個 image）。
+# repo 由 resolve_image_repos 建立，不在 template.yaml 內，重建 stack 後 repo hash 會變，需重跑本 target。
+ecr-lifecycle:
+	@for repo in $$(aws ecr describe-repositories --region $(REGION) --output json \
+	  | jq -r '.repositories[].repositoryName | select(startswith("earningsagente"))'); do \
+	  echo "applying lifecycle policy to $$repo"; \
+	  aws ecr put-lifecycle-policy --region $(REGION) --repository-name "$$repo" \
+	    --lifecycle-policy-text file://infra/ecr-lifecycle-policy.json; \
+	done
 
 ssm-put:
 	@test -n "$(FINNHUB_API_KEY)" || (echo "FINNHUB_API_KEY missing" && exit 1)
