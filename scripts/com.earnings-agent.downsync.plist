@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent: daily DynamoDB -> local sqlite downsync (watchlist + subscribers).
+
+  Runs scripts/run-downsync.sh, which loads .env then runs
+  `make sync-from-dynamodb` in the project directory once a day, mirroring
+  DynamoDB watchlist + subscribers (the Telegram-input source of truth) into
+  the local sqlite store. See docs/local-daily-schedule.md for install/
+  uninstall instructions.
+
+  To change the run time, edit the <key>Hour</key>/<key>Minute</key> values
+  under StartCalendarInterval below (24h clock, in the system's local
+  timezone — this machine is Asia/Taipei, so Hour 0 = 00:00 Taipei time).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.earnings-agent.downsync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/yehhungwei/stock-agent/scripts/run-downsync.sh</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/yehhungwei/stock-agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/Users/yehhungwei/.local/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>0</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/yehhungwei/stock-agent/.local/logs/downsync.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/yehhungwei/stock-agent/.local/logs/downsync.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

@@ -1,4 +1,4 @@
-.PHONY: install test lint dev check-bot notify-earnings sync-earnings daily-summary sync-dynamodb build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
+.PHONY: install test lint dev check-bot notify-earnings sync-earnings daily-summary sync-dynamodb sync-from-dynamodb build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
 
 REGION ?= ap-northeast-1
 STACK ?= earnings-agent
@@ -35,6 +35,9 @@ daily-summary:
 
 sync-dynamodb:
 	PYTHONPATH=src uv run python -m agent.db.upload_local_store --write
+
+sync-from-dynamodb:
+	PYTHONPATH=src uv run python -m agent.db.download_remote_store --write
 
 build:
 	cd infra && sam build

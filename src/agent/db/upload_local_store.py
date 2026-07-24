@@ -19,12 +19,8 @@ import boto3
 from agent.config import (
     aws_region,
     company_summaries_table,
-    conversations_table,
     earnings_calendar_table,
     news_table,
-    processed_updates_table,
-    subscribers_table,
-    watchlist_table,
 )
 from agent.db.backend import (
     COMPANY_SUMMARIES_TTL_SECONDS,
@@ -89,22 +85,9 @@ def _news_item(row: dict, ttl: int) -> dict:
 
 def _write_rows(rows: dict) -> None:
     ddb = boto3.resource("dynamodb", region_name=aws_region())
-    conversations = ddb.Table(conversations_table())
-    subscribers = ddb.Table(subscribers_table())
-    dedup = ddb.Table(processed_updates_table())
-    watchlist = ddb.Table(watchlist_table())
     earnings_calendar = ddb.Table(earnings_calendar_table())
     company_summaries = ddb.Table(company_summaries_table())
     news = ddb.Table(news_table())
-
-    for item in rows["conversations"]:
-        conversations.put_item(Item=item)
-    for item in rows["subscribers"]:
-        subscribers.put_item(Item=item)
-    for item in rows["dedup"]:
-        dedup.put_item(Item=item)
-    for item in rows["watchlist"]:
-        watchlist.put_item(Item=item)
 
     now = int(time.time())
     for row in rows["earnings_calendar"]:
@@ -137,10 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     counts = {name: len(items) for name, items in rows.items()}
     mode = "write" if args.write else "dry-run"
     print(
-        f"{mode}: conversations={counts['conversations']} "
-        f"subscribers={counts['subscribers']} dedup={counts['dedup']} "
-        f"watchlist={counts['watchlist']} "
-        f"earnings_calendar={counts['earnings_calendar']} "
+        f"{mode}: earnings_calendar={counts['earnings_calendar']} "
         f"company_summaries={counts['company_summaries']} "
         f"news={counts['news']}"
     )

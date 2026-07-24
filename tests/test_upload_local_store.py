@@ -76,10 +76,6 @@ def test_upload_dry_run_default_does_not_write(aws, local_store, capsys):
 
     out = capsys.readouterr().out
     assert "dry-run" in out
-    assert "conversations=1" in out
-    assert "subscribers=1" in out
-    assert "dedup=1" in out
-    assert "watchlist=1" in out
     assert "earnings_calendar=1" in out
     assert "company_summaries=1" in out
     assert "news=1" in out
@@ -95,6 +91,11 @@ def test_upload_dry_run_default_does_not_write(aws, local_store, capsys):
 
 
 def test_upload_write_copies_rows_to_dynamodb(aws, local_store):
+    """Regression (ADR-0005): local sqlite watchlist/subscribers/conversations/dedup
+    are Telegram-input, cloud-written tables — upload must NOT push stale local
+    copies back to DynamoDB, even though the local store has rows for them.
+    Only the locally-produced caches (earnings_calendar/company_summaries/news)
+    should be uploaded. This test fails against the pre-ADR-0005 code."""
     from agent.db.upload_local_store import main
 
     save_message("c1", "user", "hello")
@@ -138,18 +139,21 @@ def test_upload_write_copies_rows_to_dynamodb(aws, local_store):
 
     assert main(["--write"]) == 0
 
-    conversations = aws["ddb"].Table("test-conversations").scan()["Items"]
-    subscribers = aws["ddb"].Table("test-subscribers").scan()["Items"]
-    dedup = aws["ddb"].Table("test-processed").scan()["Items"]
-    watchlist = aws["ddb"].Table("test-watchlist").scan()["Items"]
     earnings_calendar = aws["ddb"].Table("test-earnings-calendar").scan()["Items"]
     company_summaries = aws["ddb"].Table("test-company-summaries").scan()["Items"]
     news = aws["ddb"].Table("test-news").scan()["Items"]
 
-    assert [item["content"] for item in conversations] == ["hello", "hi"]
-    assert subscribers == [{"chat_id": "c1", "subscribed_at": subscribers[0]["subscribed_at"], "active": True}]
-    assert dedup == [{"update_id": 901, "ttl": dedup[0]["ttl"]}]
-    assert sorted(item["symbol"] for item in watchlist) == ["AAPL", "NVDA"]
+    # Telegram-input / cloud-written tables must stay empty in DynamoDB —
+    # the local copies are never uploaded (source of truth stays DynamoDB).
+    assert _scan_counts(aws) == {
+        "conversations": 0,
+        "subscribers": 0,
+        "dedup": 0,
+        "watchlist": 0,
+        "earnings_calendar": 1,
+        "company_summaries": 1,
+        "news": 2,
+    }
 
     assert len(earnings_calendar) == 1
     ec = earnings_calendar[0]
@@ -217,6 +221,7 @@ def test_upload_write_failure_returns_nonzero_and_preserves_local_store(local_st
     save_message("c1", "user", "hello")
     subscribe("c1")
     claim_update_id(902)
+    get_backend().upsert_earnings_calendar([{"symbol": "AAPL", "date": "2026-07-23"}])
     before = LocalSQLiteBackend(local_store).export_rows()
 
     class FailingTable:
