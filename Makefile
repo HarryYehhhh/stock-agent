@@ -29,19 +29,19 @@ check-bot:
 	./scripts/check-bot.sh
 
 notify-earnings:
-	PYTHONPATH=src uv run python -m agent.scheduler_handler
+	PYTHONPATH=src uv run --env-file .env python -m agent.scheduler_handler
 
 sync-earnings:
-	PYTHONPATH=src uv run python -m agent.scheduler_handler sync
+	PYTHONPATH=src uv run --env-file .env python -m agent.scheduler_handler sync
 
 daily-summary:
-	PYTHONPATH=src uv run python -m agent.market_summary
+	PYTHONPATH=src uv run --env-file .env python -m agent.market_summary
 
 sync-dynamodb:
-	PYTHONPATH=src uv run python -m agent.db.upload_local_store --write
+	PYTHONPATH=src uv run --env-file .env python -m agent.db.upload_local_store --write
 
 sync-from-dynamodb:
-	PYTHONPATH=src uv run python -m agent.db.download_remote_store --write
+	PYTHONPATH=src uv run --env-file .env python -m agent.db.download_remote_store --write
 
 build:
 	cd infra && sam build
