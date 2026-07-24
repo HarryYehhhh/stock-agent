@@ -81,6 +81,14 @@
 
 - **發派對象**：`infra-engineer` 準備 checklist；使用者執行部署；部署後觀察與健康檢查派 `monitoring-engineer`
 - **相依**：Phase 2 三個 PR 全部合併
+
+> ⚠️ **雲端排程狀態注意（2026-07-24）**：本地驗證期已手動把 EventBridge Scheduler
+> `SchedulerFunctionDaily` 改為 `State: DISABLED`（消除與本地 launchd 台北 08:00 雙推）。
+> 但這個 disable **不在 `infra/template.yaml` 裡**，`make deploy` 會把它重新拉回 ENABLED。
+> 因此下方第 6 步「停本地 launchd」的時機要提前：`make deploy`（第 2 步）一跑完雲端排程即恢復
+> ENABLED，若照編號等到最後才停本地，中間會有一段本地 10:30 + 雲端 08:00 的**雙推空窗**。
+> 建議部署前就先停本地排程；若要讓雲端排程在部署後保持停用，需在 template 的 schedule 定義補
+> `State: DISABLED`（或部署後再次手動 disable）。
 - **步驟**：
   1. `make ssm-put`（確認四把 key 都在 SSM）
   2. `make build` + `make deploy`

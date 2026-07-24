@@ -34,6 +34,18 @@ Logs 追蹤：`make logs-webhook` / `make logs-processor` / `make logs-scheduler
 aws logs tail /aws/lambda/earnings-agent-processor --region ap-northeast-1 --since 1h
 ```
 
+## 查看 DynamoDB 資料（本機唯讀）
+
+免登入 AWS console，用 AWS CLI + jq 直接看正式表（scan 為唯讀，無寫入風險）：
+
+```bash
+make ddb-tables                    # 列出本 stack 的所有表（去 prefix）
+make ddb-scan TABLE=subscribers    # 掃描並攤平成一般 JSON
+make ddb-count TABLE=subscribers   # 只算筆數
+```
+
+可覆寫 `REGION` / `DDB_PREFIX`；`ddb-scan` 單次 scan 上限 1MB，大表僅回第一頁。輸出可再接 jq 篩選，例：`make ddb-scan TABLE=subscribers | jq '[.[] | select(.active)]'`。
+
 ## 已知陷阱
 
 - Telegram webhook URL 必須包含 `/prod/webhook`，少了 `/prod` 會 404；API Gateway 404 時 Lambda 不會有新 log。
