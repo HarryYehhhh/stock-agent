@@ -11,6 +11,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from moto import mock_aws
 
 from agent import local_server, market_summary, processor_handler, scheduler_handler
 from agent.db.backend import get_backend
@@ -18,6 +19,7 @@ from agent.local_server import app
 from agent.tools import _http as tools_http
 from agent.tools import earnings
 from agent.webhook_handler import handler as webhook_handler
+from tests.conftest import clear_db_caches
 
 
 CTX = SimpleNamespace(
@@ -33,6 +35,62 @@ def _event(body: dict) -> dict:
         "body": json.dumps(body),
         "headers": {"x-telegram-bot-api-secret-token": "fake-secret"},
     }
+
+
+def test_rest_webhook_rejects_missing_secret(local_store):
+    response = TestClient(app).post(
+        "/webhook",
+        content=json.dumps({"update_id": 401, "message": {"chat": {"id": 1}, "text": "/start"}}),
+    )
+
+    assert response.status_code == 401
+
+
+def test_rest_webhook_accepts_valid_secret(aws, local_store, monkeypatch):
+    fake_send = MagicMock()
+    monkeypatch.setattr(processor_handler, "send_message", fake_send)
+    body = {"update_id": 402, "message": {"chat": {"id": 1}, "text": "/start"}}
+
+    response = TestClient(app).post(
+        "/webhook",
+        content=json.dumps(body),
+        headers={"x-telegram-bot-api-secret-token": "fake-secret"},
+    )
+
+    assert response.status_code == 200
+    fake_send.assert_called_once()
+
+
+def test_rest_webhook_first_delivery_succeeds_without_real_sqs_queue(
+    local_store, monkeypatch
+):
+    """Regression test for local /webhook 500s: webhook_handler.handler() sends
+    to real SQS (used by the Lambda path), but no queue is provisioned locally.
+    The local /webhook route must not depend on that SQS call succeeding.
+
+    Uses mock_aws() directly (not the `aws` fixture) and deliberately does NOT
+    create the SQS queue, so a real QueueDoesNotExist error is reachable if the
+    route still calls SQS for real.
+    """
+    monkeypatch.setenv(
+        "UPDATES_QUEUE_URL",
+        "https://sqs.ap-northeast-1.amazonaws.com/123456789012/does-not-exist",
+    )
+    fake_send = MagicMock()
+    monkeypatch.setattr(processor_handler, "send_message", fake_send)
+    body = {"update_id": 403, "message": {"chat": {"id": 1}, "text": "/start"}}
+
+    with mock_aws():
+        clear_db_caches()
+        response = TestClient(app, raise_server_exceptions=False).post(
+            "/webhook",
+            content=json.dumps(body),
+            headers={"x-telegram-bot-api-secret-token": "fake-secret"},
+        )
+        clear_db_caches()
+
+    assert response.status_code == 200
+    fake_send.assert_called_once()
 
 
 def test_local_webhook_duplicate_update_enqueues_once(aws, local_store):

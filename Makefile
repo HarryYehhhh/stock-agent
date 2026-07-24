@@ -1,4 +1,4 @@
-.PHONY: install test lint dev notify-earnings sync-earnings build deploy set-webhook logs-webhook logs-processor logs-scheduler ssm-put
+.PHONY: install test lint dev notify-earnings sync-earnings daily-summary build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put
 
 REGION ?= ap-northeast-1
 STACK ?= earnings-agent
@@ -18,6 +18,9 @@ notify-earnings:
 
 sync-earnings:
 	PYTHONPATH=src uv run python -m agent.scheduler_handler sync
+
+daily-summary:
+	PYTHONPATH=src uv run python -m agent.market_summary
 
 build:
 	cd infra && sam build
@@ -42,6 +45,18 @@ set-webhook:
 	curl -sS "https://api.telegram.org/bot$(TELEGRAM_BOT_TOKEN)/setWebhook" \
 	  -d "url=$(WEBHOOK_URL)" \
 	  -d "secret_token=$(TELEGRAM_WEBHOOK_SECRET)"
+
+set-webhook-local:
+	@test -n "$(TELEGRAM_BOT_TOKEN)" || (echo "TELEGRAM_BOT_TOKEN missing" && exit 1)
+	@test -n "$(WEBHOOK_URL)" || (echo "WEBHOOK_URL missing" && exit 1)
+	@test -n "$(TELEGRAM_WEBHOOK_SECRET)" || (echo "TELEGRAM_WEBHOOK_SECRET missing" && exit 1)
+	curl -sS "https://api.telegram.org/bot$(TELEGRAM_BOT_TOKEN)/setWebhook" \
+	  -d "url=$(WEBHOOK_URL)/webhook" \
+	  -d "secret_token=$(TELEGRAM_WEBHOOK_SECRET)"
+
+delete-webhook:
+	@test -n "$(TELEGRAM_BOT_TOKEN)" || (echo "TELEGRAM_BOT_TOKEN missing" && exit 1)
+	curl -sS "https://api.telegram.org/bot$(TELEGRAM_BOT_TOKEN)/deleteWebhook"
 
 logs-webhook:
 	cd infra && sam logs --stack-name $(STACK) --region $(REGION) -n WebhookFunction --tail
