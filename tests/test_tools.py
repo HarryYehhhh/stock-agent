@@ -7,9 +7,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import agent.market_summary as market_summary_module
 from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
 from agent.tools import _http as tools_http
-from agent.tools import earnings, estimates, news, quote
+from agent.tools import earnings, estimates, market_summary_tool, news, quote
 
 
 @pytest.fixture
@@ -37,6 +38,7 @@ def test_all_tool_schemas_have_required_fields():
         "get_analyst_estimates",
         "get_stock_news",
         "get_quote",
+        "get_market_summary",
     }
     for tool in ALL_TOOL_SCHEMAS:
         assert "description" in tool
@@ -143,3 +145,45 @@ def test_get_quote_returns_normalized_fields(mock_http):
     args, kwargs = mock_http.get.call_args
     assert args[0] == "/quote"
     assert kwargs["params"]["symbol"] == "AAPL"
+
+
+# --- market summary ---
+
+def test_get_market_summary_returns_only_summary(monkeypatch):
+    monkeypatch.setattr(
+        market_summary_module,
+        "generate_market_summary",
+        lambda days_back: {
+            "summary": "今日市場摘要文字",
+            "news": {"big7": [{"headline": "h"}], "ai": [{"headline": "h2"}]},
+            "indexes": [{"name": "S&P 500", "symbol": "SPY", "close": 500.0, "change_percent": 1.0}],
+        },
+    )
+    out = market_summary_tool.get_market_summary()
+    assert out == {"summary": "今日市場摘要文字"}
+    assert "news" not in out
+    assert "indexes" not in out
+
+
+def test_get_market_summary_passes_days_back(monkeypatch):
+    calls = []
+
+    def fake_generate(days_back):
+        calls.append(days_back)
+        return {"summary": "s", "news": {"big7": [], "ai": []}, "indexes": []}
+
+    monkeypatch.setattr(market_summary_module, "generate_market_summary", fake_generate)
+    market_summary_tool.get_market_summary(days_back=3)
+    assert calls == [3]
+
+
+def test_get_market_summary_default_days_back_is_one(monkeypatch):
+    calls = []
+
+    def fake_generate(days_back):
+        calls.append(days_back)
+        return {"summary": "s", "news": {"big7": [], "ai": []}, "indexes": []}
+
+    monkeypatch.setattr(market_summary_module, "generate_market_summary", fake_generate)
+    market_summary_tool.get_market_summary()
+    assert calls == [1]

@@ -88,6 +88,7 @@ def test_build_tools_returns_function_definitions():
         "get_analyst_estimates",
         "get_stock_news",
         "get_quote",
+        "get_market_summary",
     }
 
 

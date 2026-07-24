@@ -31,6 +31,7 @@ SYSTEM_INSTRUCTION = (
     "同時呼叫 get_analyst_estimates（取得分析師共識）和 get_earnings_calendar（查詢財報發布日期）。"
     "查詢特定 ticker 的財報日期時，務必傳 symbol 參數給 get_earnings_calendar，避免漏掉冷門股。"
     "查詢即時股價或當日漲跌時呼叫 get_quote。"
+    "詢問市場摘要、大盤整體狀況時呼叫 get_market_summary，不要用 get_quote 猜指數代號。"
     "如果財報尚未公布（發布日期晚於今天），在回覆中提醒用戶預計發布日期與時段。"
     "不要僅因 earnings calendar 查無結果就回覆『找不到資料』——分析師預期通常早於財報日期公布。"
 )

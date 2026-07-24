@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-25 — market-summary-tool — evaluator — ✅ Pass
+- 連結：docs/qa-reports/market-summary-tool.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 222 passed/12 errors（既有 socket bind 沙盒限制，非回歸）、非沙盒重跑 234 passed, 0 failed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。第五個工具 `get_market_summary` 現場呼叫 `generate_market_summary(days_back)`、回傳僅含 `summary` 不含 news/indexes、`days_back` 1-7 越界由既有 `market_summary._date_from()` clamp 防呆、`tools/__init__.py` 掛載、`SYSTEM_INSTRUCTION` 補工具選擇句。延遲 import 解循環（tools → market_summary_tool → agent.market_summary → agent.agent → agent.tools）已用 `python -c "from agent.tools import TOOL_FUNCTIONS"` 實測驗證無誤。
+
 ## 2026-07-25 — chat-cli — evaluator — ✅ Pass
 - 連結：docs/qa-reports/chat-cli.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 219 passed/12 errors（既有 `test_local_integration.py` socket bind 沙盒限制，非回歸）、非沙盒重跑 231 passed, 0 failed；`tests/test_chat_cli.py` 7/7 passed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。
