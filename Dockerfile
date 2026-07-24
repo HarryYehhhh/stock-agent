@@ -4,7 +4,7 @@ WORKDIR ${LAMBDA_TASK_ROOT}
 
 COPY pyproject.toml ./
 RUN pip install --no-cache-dir \
-    "google-genai>=1.0.0" \
+    "groq>=0.11.0" \
     "httpx>=0.27.0" \
     "boto3>=1.35.0" \
     "aws-lambda-powertools>=3.0.0"

@@ -47,16 +47,16 @@ ssm-put:
 	@test -n "$(GROQ_API_KEY)" || (echo "GROQ_API_KEY missing" && exit 1)
 	@test -n "$(TELEGRAM_BOT_TOKEN)" || (echo "TELEGRAM_BOT_TOKEN missing" && exit 1)
 	@test -n "$(TELEGRAM_WEBHOOK_SECRET)" || (echo "TELEGRAM_WEBHOOK_SECRET missing" && exit 1)
-	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/finnhub-api-key --value "$(FINNHUB_API_KEY)"
-	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/groq-api-key --value "$(GROQ_API_KEY)"
-	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/telegram-bot-token --value "$(TELEGRAM_BOT_TOKEN)"
-	aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/telegram-webhook-secret --value "$(TELEGRAM_WEBHOOK_SECRET)"
+	@aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/finnhub-api-key --value "$(FINNHUB_API_KEY)"
+	@aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/groq-api-key --value "$(GROQ_API_KEY)"
+	@aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/telegram-bot-token --value "$(TELEGRAM_BOT_TOKEN)"
+	@aws ssm put-parameter --region $(REGION) --overwrite --type SecureString --name /earnings-agent/telegram-webhook-secret --value "$(TELEGRAM_WEBHOOK_SECRET)"
 
 set-webhook:
 	@test -n "$(TELEGRAM_BOT_TOKEN)" || (echo "TELEGRAM_BOT_TOKEN missing" && exit 1)
 	@test -n "$(WEBHOOK_URL)" || (echo "WEBHOOK_URL missing" && exit 1)
 	@test -n "$(TELEGRAM_WEBHOOK_SECRET)" || (echo "TELEGRAM_WEBHOOK_SECRET missing" && exit 1)
-	curl -sS "https://api.telegram.org/bot$(TELEGRAM_BOT_TOKEN)/setWebhook" \
+	@curl -sS "https://api.telegram.org/bot$(TELEGRAM_BOT_TOKEN)/setWebhook" \
 	  -d "url=$(WEBHOOK_URL)" \
 	  -d "secret_token=$(TELEGRAM_WEBHOOK_SECRET)"
 
@@ -64,13 +64,13 @@ set-webhook-local:
 	@test -n "$(TELEGRAM_BOT_TOKEN)" || (echo "TELEGRAM_BOT_TOKEN missing" && exit 1)
 	@test -n "$(WEBHOOK_URL)" || (echo "WEBHOOK_URL missing" && exit 1)
 	@test -n "$(TELEGRAM_WEBHOOK_SECRET)" || (echo "TELEGRAM_WEBHOOK_SECRET missing" && exit 1)
-	curl -sS "https://api.telegram.org/bot$(TELEGRAM_BOT_TOKEN)/setWebhook" \
+	@curl -sS "https://api.telegram.org/bot$(TELEGRAM_BOT_TOKEN)/setWebhook" \
 	  -d "url=$(WEBHOOK_URL)/webhook" \
 	  -d "secret_token=$(TELEGRAM_WEBHOOK_SECRET)"
 
 delete-webhook:
 	@test -n "$(TELEGRAM_BOT_TOKEN)" || (echo "TELEGRAM_BOT_TOKEN missing" && exit 1)
-	curl -sS "https://api.telegram.org/bot$(TELEGRAM_BOT_TOKEN)/deleteWebhook"
+	@curl -sS "https://api.telegram.org/bot$(TELEGRAM_BOT_TOKEN)/deleteWebhook"
 
 logs-webhook:
 	cd infra && sam logs --stack-name $(STACK) --region $(REGION) -n WebhookFunction --tail

@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-24 — dockerfile-groq-dep — evaluator — ✅ Pass
+- 連結：docs/qa-reports/dockerfile-groq-dep.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 179 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 191 passed, 0 failed（含新增 `tests/test_dockerfile_deps.py`）；🔴 0、🟡 0（🟢 1：Dockerfile pip install 區塊解析 regex 依賴後方空行，未來格式微調有極小機率誤判但會安全 assert 失敗而非靜默通過）；循環次數 1；未解 P0/P1 0。無正式 contract，對照需求驗收：`Dockerfile:7` `google-genai>=1.0.0` → `groq>=0.11.0` 修正雲端 ProcessorFunction/SchedulerFunction 的 `Runtime.ImportModuleError: No module named 'groq'`（已用 `git stash` 重現修復前 test fail、獨立 `docker build` + `docker run --entrypoint python` 驗證 `agent.agent`/`agent.processor_handler`/`agent.scheduler_handler` 皆可 import，image 已清除）；Makefile `ssm-put`/`set-webhook`/`set-webhook-local`/`delete-webhook` 共 7 處金鑰相關 recipe 行補 `@`（全檔掃描確認無遺漏其他 target），實跑 `make delete-webhook TELEGRAM_BOT_TOKEN=FAKE` 確認無明文洩漏；diff 完全手術式，僅 Dockerfile 一行 + Makefile 7 處 `@` + 新測試檔。
+
 ## 2026-07-24 — dev-env-file — evaluator — ✅ Pass
 - 連結：docs/qa-reports/dev-env-file.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 148 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 160 passed, 0 failed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。無正式 contract，對照需求驗收：`make dev` 加 `--env-file .env`（Makefile:20）+ `python-dotenv` 補進 dev deps（確認修復前 lockfile 確實缺此依賴）+ 新增 `tests/test_dev_env_file.py` 先重現 `KeyError` bug 再驗證 `uvicorn.Config(env_file=...)` 修法有效（已讀 uvicorn 原始碼確認此路徑與 CLI `--env-file` 等價）；diff 完全手術式，僅 Makefile/pyproject.toml/uv.lock/新測試檔；python-dotenv 正確限定在 dev group，不影響走 SSM 的 production Lambda。
