@@ -1,4 +1,4 @@
-.PHONY: install test lint dev notify-earnings sync-earnings daily-summary sync-dynamodb build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
+.PHONY: install test lint dev check-bot notify-earnings sync-earnings daily-summary sync-dynamodb build deploy set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
 
 REGION ?= ap-northeast-1
 STACK ?= earnings-agent
@@ -16,6 +16,11 @@ test:
 dev:
 	cp -n .env.example .env || true
 	uv run uvicorn agent.local_server:app --reload --port 8080
+
+# 一鍵健檢 local-first 模式下 bot 是否健康：本地 server / ngrok tunnel /
+# Telegram webhook / 金鑰 / Groq API。唯讀，不寫 DB 也不發訊息。
+check-bot:
+	./scripts/check-bot.sh
 
 notify-earnings:
 	PYTHONPATH=src uv run python -m agent.scheduler_handler
