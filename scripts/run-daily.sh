@@ -18,4 +18,4 @@ set -a
 source .env
 set +a
 
-make sync-earnings && make notify-earnings && make daily-summary
+make sync-earnings && make notify-earnings && make daily-summary && make sync-dynamodb

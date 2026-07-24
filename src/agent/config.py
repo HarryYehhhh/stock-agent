@@ -87,6 +87,10 @@ def company_summaries_table() -> str:
     return os.environ.get("COMPANY_SUMMARIES_TABLE", "earnings-agent-company-summaries")
 
 
+def news_table() -> str:
+    return os.environ.get("NEWS_TABLE", "earnings-agent-news")
+
+
 def updates_queue_url() -> str:
     return os.environ["UPDATES_QUEUE_URL"]
 

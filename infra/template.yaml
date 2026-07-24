@@ -155,6 +155,34 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
+  NewsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AppName}-news"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: headline
+          AttributeType: S
+        - AttributeName: bucket
+          AttributeType: S
+        - AttributeName: published_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: headline
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: published-at-index
+          KeySchema:
+            - AttributeName: bucket
+              KeyType: HASH
+            - AttributeName: published_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
   UpdatesQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -279,6 +307,7 @@ Resources:
           Properties:
             ScheduleExpression: "cron(0 0 * * ? *)"
             ScheduleExpressionTimezone: UTC
+            State: DISABLED
     Metadata:
       Dockerfile: Dockerfile
       DockerContext: ../

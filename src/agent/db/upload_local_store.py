@@ -10,18 +10,30 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
+from decimal import Decimal
 from pathlib import Path
 
 import boto3
 
 from agent.config import (
     aws_region,
+    company_summaries_table,
     conversations_table,
+    earnings_calendar_table,
+    news_table,
     processed_updates_table,
     subscribers_table,
     watchlist_table,
 )
-from agent.db.backend import LocalSQLiteBackend, local_store_path, selected_backend_name
+from agent.db.backend import (
+    COMPANY_SUMMARIES_TTL_SECONDS,
+    EARNINGS_CALENDAR_TTL_SECONDS,
+    NEWS_TTL_SECONDS,
+    LocalSQLiteBackend,
+    local_store_path,
+    selected_backend_name,
+)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -42,12 +54,48 @@ def _load_rows(path: Path) -> dict:
     return LocalSQLiteBackend(path).export_rows()
 
 
+def _earnings_calendar_item(row: dict, ttl: int) -> dict:
+    item: dict = {
+        "symbol": row["symbol"],
+        "earning_date": row["earning_date"],
+        "updated_at": row["updated_at"],
+        "ttl": ttl,
+    }
+    if row.get("extended_hour") is not None:
+        item["extended_hour"] = row["extended_hour"]
+    if row.get("eps_estimate") is not None:
+        item["eps_estimate"] = Decimal(str(row["eps_estimate"]))
+    if row.get("revenue_estimate") is not None:
+        item["revenue_estimate"] = Decimal(str(row["revenue_estimate"]))
+    return item
+
+
+def _news_item(row: dict, ttl: int) -> dict:
+    item: dict = {
+        "headline": row["headline"],
+        "bucket": "news",
+        "published_at": row["published_at"],
+        "category": row["category"],
+        "summary": row["summary"],
+        "fetched_at": row["fetched_at"],
+        "ttl": ttl,
+    }
+    if row.get("symbol") is not None:
+        item["symbol"] = row["symbol"]
+    if row.get("url") is not None:
+        item["url"] = row["url"]
+    return item
+
+
 def _write_rows(rows: dict) -> None:
     ddb = boto3.resource("dynamodb", region_name=aws_region())
     conversations = ddb.Table(conversations_table())
     subscribers = ddb.Table(subscribers_table())
     dedup = ddb.Table(processed_updates_table())
     watchlist = ddb.Table(watchlist_table())
+    earnings_calendar = ddb.Table(earnings_calendar_table())
+    company_summaries = ddb.Table(company_summaries_table())
+    news = ddb.Table(news_table())
 
     for item in rows["conversations"]:
         conversations.put_item(Item=item)
@@ -57,6 +105,24 @@ def _write_rows(rows: dict) -> None:
         dedup.put_item(Item=item)
     for item in rows["watchlist"]:
         watchlist.put_item(Item=item)
+
+    now = int(time.time())
+    for row in rows["earnings_calendar"]:
+        earnings_calendar.put_item(
+            Item=_earnings_calendar_item(row, now + EARNINGS_CALENDAR_TTL_SECONDS)
+        )
+    for row in rows["company_summaries"]:
+        company_summaries.put_item(
+            Item={
+                "symbol": row["symbol"],
+                "earning_date": row["earning_date"],
+                "summary": row["summary"],
+                "created_at": row["created_at"],
+                "ttl": now + COMPANY_SUMMARIES_TTL_SECONDS,
+            }
+        )
+    for row in rows["news"]:
+        news.put_item(Item=_news_item(row, now + NEWS_TTL_SECONDS))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -73,7 +139,10 @@ def main(argv: list[str] | None = None) -> int:
     print(
         f"{mode}: conversations={counts['conversations']} "
         f"subscribers={counts['subscribers']} dedup={counts['dedup']} "
-        f"watchlist={counts['watchlist']}"
+        f"watchlist={counts['watchlist']} "
+        f"earnings_calendar={counts['earnings_calendar']} "
+        f"company_summaries={counts['company_summaries']} "
+        f"news={counts['news']}"
     )
 
     if not args.write:
