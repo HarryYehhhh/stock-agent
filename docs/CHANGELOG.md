@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-25 — chat-cli — evaluator — ✅ Pass
+- 連結：docs/qa-reports/chat-cli.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 219 passed/12 errors（既有 `test_local_integration.py` socket bind 沙盒限制，非回歸）、非沙盒重跑 231 passed, 0 failed；`tests/test_chat_cli.py` 7/7 passed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。
+
 ## 2026-07-24 — ecr-lifecycle-policy — evaluator — ✅ Pass
 - 連結：docs/qa-reports/ecr-lifecycle-policy.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 212 passed/12 errors（既有 `test_local_integration.py` socket bind 沙盒限制，非回歸）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。三個 companion-stack ECR repo（`processorfunction78019991repo`/`schedulerfunction07e3fe86repo`/`webhookfunction2cdba7a2repo`）已實際用 `aws ecr get-lifecycle-policy` 逐一驗證，皆回傳 keep-last-3（`imageCountMoreThan 3`/`tagStatus any`/`expire`）policy；並用 `aws lambda get-function` + `aws ecr describe-images` 交叉確認現役 Lambda image tag 是 push 時間最新，落在保留範圍內不會被清除。改動範圍僅 `Makefile`/`docs/runbook.md`/新增 `infra/ecr-lifecycle-policy.json`，未觸碰 `template.yaml`/`samconfig.toml`。
