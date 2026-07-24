@@ -95,6 +95,31 @@ def test_dynamodb_earnings_calendar_omits_none_estimates(aws):
     assert rows[0]["revenue_estimate"] is None
 
 
+def test_dynamodb_watchlist_earnings_date_range_boundaries(aws):
+    """earning_date outside [date_from, date_to] must be excluded; boundaries are inclusive."""
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.add_to_watchlist("111", "AAPL")
+    backend.upsert_earnings_calendar(
+        [
+            {"symbol": "AAPL", "date": "2026-06-30", "hour": "amc"},  # before range
+            {"symbol": "AAPL", "date": "2026-07-01", "hour": "bmo"},  # == date_from
+            {"symbol": "AAPL", "date": "2026-07-15", "hour": "amc"},  # inside range
+            {"symbol": "AAPL", "date": "2026-07-31", "hour": "bmo"},  # == date_to
+            {"symbol": "AAPL", "date": "2026-08-01", "hour": "amc"},  # after range
+        ]
+    )
+
+    rows = backend.get_chat_watchlist_earnings("111", "2026-07-01", "2026-07-31")
+
+    assert [row["earning_date"] for row in rows] == [
+        "2026-07-01",
+        "2026-07-15",
+        "2026-07-31",
+    ]
+
+
 def test_dynamodb_watchlist_earnings_for_date_scopes_rows_per_subscriber(aws):
     from agent.db.backend import get_backend
 

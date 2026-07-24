@@ -46,3 +46,26 @@
 ## 結論
 - 是否可合併：是（🟡 為測試覆蓋缺口，非功能缺陷，不阻塞合併，但建議在下一輪補上）
 - 最該先處理的 1 件事：補 `get_chat_watchlist_earnings` 的日期區間過濾測試（區間外的財報列應被排除），對齊 contract 明確要求的 Tests required 項目
+
+---
+
+## Follow-up: 補日期區間邊界測試（2026-07-24）
+
+- **範圍**：只補測試，不動 `src/`，用以解掉上述 🟡 finding
+- **改動**：`tests/test_dynamodb_backend.py` 新增 `test_dynamodb_watchlist_earnings_date_range_boundaries`
+
+### 驗收檢查
+- **測試內容核實**：塞入 5 筆 `earning_date`（2026-06-30 / 07-01 / 07-15 / 07-31 / 08-01），呼叫 `get_chat_watchlist_earnings("111", "2026-07-01", "2026-07-31")`，斷言回傳恰好 `["2026-07-01", "2026-07-15", "2026-07-31"]`（依日期排序）。確認同時涵蓋：(a) 區間外的 06-30、08-01 被排除；(b) 兩個端點 07-01、07-31 都被含入（對應 `DynamoDBBackend.get_chat_watchlist_earnings`／`src/agent/db/backend.py:920-952` 用的 `Key("earning_date").between(date_from, date_to)` 是 inclusive）。核對 `add_to_watchlist` / `upsert_earnings_calendar` 呼叫簽章與現有其他測試一致，非胡亂塞資料。
+- **零改動確認**：`git diff --stat` 顯示僅 `tests/test_dynamodb_backend.py`（+25 行），無其他檔案異動；`src/` 目錄零改動。
+- **測試結果**：
+  - `tests/test_dynamodb_backend.py`：10 passed（新測試含在內，PASSED）
+  - 全套（沙盒內）：145 passed / 0 failed / 12 errors（`test_local_integration.py` 的 `finnhub_stub` socket bind 沙盒限制，與本次改動無關；較 baseline 144 passed 多 1，與新增測試數一致）
+  - 全套（非沙盒重跑）：**157 passed / 0 failed**，與 baseline 156 passed + 1 新測試吻合
+- **實作 bug**：未發現，`src/agent/db/backend.py` 的 `between()` 行為與測試預期一致
+
+### Verdict（follow-up）
+✅ Pass — 🟡 finding 已完全解決，無新增問題。
+
+### 結論（follow-up）
+- 是否可合併：是
+- 最該先處理的事：無

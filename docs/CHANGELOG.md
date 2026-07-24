@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-24 — dynamodb-backend-pr1-sprint（follow-up：補日期區間邊界測試）— evaluator — ✅ Pass
+- 連結：docs/qa-reports/dynamodb-backend-pr1-sprint.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 145 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 157 passed, 0 failed；只補 `tests/test_dynamodb_backend.py` 新增 `test_dynamodb_watchlist_earnings_date_range_boundaries`，`src/` 零改動；🔴 0、🟡 0（解掉前次 🟡：`get_chat_watchlist_earnings` 缺日期區間過濾邊界測試）；循環次數 1；未解 P0/P1 0。
+
 ## 2026-07-24 — dynamodb-backend-pr1-sprint — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/dynamodb-backend-pr1-sprint.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 144 passed/12 errors（既有 `finnhub_stub` socket bind 沙盒限制，與本次改動無關）、非沙盒重跑 156 passed, 0 failed；🔴 0、🟡 1（`get_chat_watchlist_earnings` 缺日期區間過濾邊界測試，contract Tests required 明確列出但未覆蓋）；循環次數 1；未解 P0/P1 0。
