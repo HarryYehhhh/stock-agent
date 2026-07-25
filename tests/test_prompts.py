@@ -55,3 +55,18 @@ _OLD_SUMMARY_SYSTEM_PROMPT = (
 def test_summary_system_prompt_days_back_1_is_byte_for_byte_identical_to_pre_sprint_baseline():
     assert prompts.summary_system_prompt(1) == _OLD_SUMMARY_SYSTEM_PROMPT
     assert prompts.summary_system_prompt() == _OLD_SUMMARY_SYSTEM_PROMPT
+
+
+def test_summary_system_prompt_period_wording_requires_daily_index_label():
+    """days_back>1：大盤指數收盤數據是當日漲跌，摘要不得表述成整段期間的變化。"""
+    prompt = prompts.summary_system_prompt(7)
+
+    assert "當日" in prompt
+    assert "不得表述成整段期間的變化" in prompt
+
+
+def test_system_instruction_mentions_days_back_cap_and_long_period_mapping():
+    """1a：教 LLM days_back 上限 7，且「本月」等更長期間也要傳 7 並在回覆中說明。"""
+    assert "days_back 上限為 7" in prompts.SYSTEM_INSTRUCTION
+    assert "本月" in prompts.SYSTEM_INSTRUCTION
+    assert "僅涵蓋最近 7 天" in prompts.SYSTEM_INSTRUCTION

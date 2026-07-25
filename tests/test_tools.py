@@ -237,6 +237,14 @@ def test_market_summary_tool_days_back_description_maps_time_phrases():
     assert "-> 7" in description
 
 
+def test_market_summary_tool_days_back_description_caps_longer_periods_at_7():
+    """本月或更長期間也要傳 7（schema maximum），避免模型傳超過上限觸發 400。"""
+    description = market_summary_tool.MARKET_SUMMARY_TOOL["input_schema"]["properties"]["days_back"]["description"]
+
+    assert "本月" in description
+    assert market_summary_tool.MARKET_SUMMARY_TOOL["input_schema"]["properties"]["days_back"]["maximum"] == 7
+
+
 def test_get_market_summary_returns_only_summary(monkeypatch):
     monkeypatch.setattr(
         market_summary_module,

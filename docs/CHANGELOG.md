@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-25 — time-consistency-fixes — evaluator — ✅ Pass
+- 連結：docs/qa-reports/time-consistency-fixes.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 304/304 passed（沙箱下 12 個 `test_local_integration.py` 因 socket bind 被擋，停用沙箱重跑全綠，非 regression）；🔴 0、🟡 0、🟢 2；循環次數 1；未解 P0/P1 0/0。兩條 days_back=1 byte-for-byte 凍結測試獨立比對 diff 確認測試本身未被修改，且 PASS；days_back>1「當日」標註在 system prompt 與 user_content 均到位；`tool_use_failed` 400 重試邏輯與非 `tool_use_failed` 仍拋出、`MAX_TOOL_LOOPS` 耗盡三種情境皆有對應測試且斷言 call_count/訊息內容；確認重試提示不會污染對話歷史（`processor_handler.py` 只存 `text`/`reply`，非整個 `messages`）。
+
 ## 2026-07-25 — summary-timewindow — evaluator — ✅ Pass（round 2 複驗，最終狀態）
 - 連結：docs/qa-reports/summary-timewindow.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 297/297 passed（沙箱下 12 個 `test_local_integration.py` 因 socket bind 被擋，停用沙箱重跑全綠，非 regression）；🔴 0、🟡 0（round 1 的 1 條已回修）、🟢 2；循環次數 2；未解 P0/P1 0/0。回修採修法 (a)：`SUMMARY_SYSTEM_PROMPT_TEMPLATE`/`user_content` 的日期區間提示改為僅 days_back>1 生效，evaluator 獨立比對 `git show HEAD:src/agent/prompts.py` 舊版常數確認 days_back<=1 逐字（byte-for-byte）恢復，並以 mutation 測試驗證新增回歸測試具備真實偵測力。

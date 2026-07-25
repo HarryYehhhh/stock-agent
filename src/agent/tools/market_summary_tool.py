@@ -28,8 +28,11 @@ MARKET_SUMMARY_TOOL = {
                 "description": (
                     "How many days of news to cover (1-7, default 1). Map the "
                     "user's time phrase: today/今天/本日 -> 1, this "
-                    "week/本週/近一週/過去七天 -> 7. Default to 1 when no time "
-                    "phrase is given."
+                    "week/本週/近一週/過去七天 -> 7. This tool has no data beyond "
+                    "7 days back, so for this month/本月 or any longer period, "
+                    "also pass 7 (the maximum) and note in your reply that the "
+                    "summary only covers the most recent 7 days. Default to 1 "
+                    "when no time phrase is given."
                 ),
                 "minimum": 1,
                 "maximum": 7,

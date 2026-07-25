@@ -8,7 +8,7 @@ import re
 from datetime import date
 from functools import lru_cache
 
-from groq import Groq
+from groq import BadRequestError, Groq
 
 from agent.config import groq_api_key
 from agent.prompts import SYSTEM_INSTRUCTION
@@ -83,12 +83,26 @@ def run_agent(user_message: str, history: list[dict]) -> str:
     tools = _build_tools()
 
     for _ in range(MAX_TOOL_LOOPS):
-        response = _client().chat.completions.create(
-            model=MODEL,
-            messages=messages,
-            tools=tools,
-            temperature=0.7,
-        )
+        try:
+            response = _client().chat.completions.create(
+                model=MODEL,
+                messages=messages,
+                tools=tools,
+                temperature=0.7,
+            )
+        except BadRequestError as e:
+            error_code = e.body.get("error", {}).get("code") if isinstance(e.body, dict) else None
+            if error_code != "tool_use_failed":
+                raise
+            log.warning("tool_use_failed, asking model to retry: %s", _sanitize_error(str(e)))
+            messages.append({
+                "role": "user",
+                "content": (
+                    "工具呼叫參數不符合規範，請依照以下錯誤訊息修正參數後重新呼叫工具：\n"
+                    f"{_sanitize_error(str(e))}"
+                ),
+            })
+            continue
 
         usage = getattr(response, "usage", None)
         if usage:

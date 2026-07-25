@@ -6,7 +6,9 @@ import json
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import httpx
 import pytest
+from groq import BadRequestError
 
 from agent import agent as agent_module
 
@@ -18,6 +20,16 @@ def _text_response(text: str):
         choices=[choice],
         usage=SimpleNamespace(prompt_tokens=10, completion_tokens=20),
     )
+
+
+def _bad_request_error(code: str, message: str = "tool call validation failed") -> BadRequestError:
+    req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    resp = httpx.Response(
+        400,
+        request=req,
+        json={"error": {"message": message, "type": "invalid_request_error", "code": code}},
+    )
+    return BadRequestError(f"Error code: 400 - {resp.json()}", response=resp, body=resp.json())
 
 
 def _tool_response(tool_name: str, tool_args: dict):
@@ -144,3 +156,45 @@ def test_tool_exception_returned_as_error_to_groq(mock_client, monkeypatch):
 
     out = agent_module.run_agent("test", [])
     assert out == "已處理錯誤"
+
+
+def test_tool_use_failed_400_retries_and_recovers(mock_client):
+    """days_back=30 超出 schema maximum=7 之類的 tool_use_failed 400 不應往外拋——
+    捕捉後把驗證錯誤塞回 messages，讓模型有機會修正參數重試。"""
+    mock_client.chat.completions.create.side_effect = [
+        _bad_request_error("tool_use_failed", "`/days_back`: must be <= 7 but found 30"),
+        _text_response("本週市場摘要如下"),
+    ]
+
+    out = agent_module.run_agent("本月市場走勢如何?", [])
+
+    assert out == "本週市場摘要如下"
+    assert mock_client.chat.completions.create.call_count == 2
+    last_call_messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
+    assert any(
+        m["role"] == "user" and "must be <= 7 but found 30" in m["content"]
+        for m in last_call_messages
+    )
+
+
+def test_non_tool_use_failed_400_still_raises(mock_client):
+    """非 tool_use_failed 的其他 400 錯誤（例如認證失敗）維持現行為，往外拋。"""
+    mock_client.chat.completions.create.side_effect = _bad_request_error(
+        "invalid_api_key", "invalid API key"
+    )
+
+    with pytest.raises(BadRequestError):
+        agent_module.run_agent("test", [])
+
+
+def test_tool_use_failed_400_exhausts_max_loops(mock_client):
+    """若模型一直修不好參數，重試次數計入 MAX_TOOL_LOOPS，最終走既有的超過
+    最大迴圈次數回覆，不會無窮迴圈。"""
+    mock_client.chat.completions.create.side_effect = [
+        _bad_request_error("tool_use_failed") for _ in range(agent_module.MAX_TOOL_LOOPS)
+    ]
+
+    out = agent_module.run_agent("本月市場走勢如何?", [])
+
+    assert out == "（推理超過最大迴圈次數，請換個問法重試）"
+    assert mock_client.chat.completions.create.call_count == agent_module.MAX_TOOL_LOOPS

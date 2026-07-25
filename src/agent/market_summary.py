@@ -244,14 +244,20 @@ def generate_market_summary(days_back: int = 1) -> dict:
     if days_back <= 1:
         period_desc = "每日"
         coverage_clause = ""
+        index_label = "[大盤收盤]"
     else:
         period_desc = f"過去 {days_back} 天"
-        coverage_clause = f"（實際涵蓋日期：{date_range}），並在摘要中註明這份資料涵蓋的日期區間"
+        coverage_clause = (
+            f"（實際涵蓋日期：{date_range}），並在摘要中註明這份資料涵蓋的日期區間"
+            "；大盤收盤數據是當日漲跌幅，不是這段期間的漲跌幅，摘要中提到指數數字時"
+            "須標註為「當日」，不得表述成整段期間的變化"
+        )
+        index_label = "[大盤收盤（當日漲跌）]"
     user_content = (
         f"今天日期是 {date.today().isoformat()}。"
         f"以下是大盤收盤數據與過去 {days_back} 天的新聞資料{coverage_clause}，"
         f"請產出{period_desc}市場摘要：\n\n"
-        f"[大盤收盤]\n{index_lines}\n\n"
+        f"{index_label}\n{index_lines}\n\n"
         f"{_format_news_block(news)}"
     )
     response = _client().chat.completions.create(

@@ -243,6 +243,23 @@ def test_generate_summary_uses_period_wording_for_multi_day_window(
     assert "過去 7 天市場摘要" in messages[1]["content"]
 
 
+def test_generate_summary_multi_day_window_annotates_index_as_daily_change(
+    local_store, mock_finnhub, mock_groq, mock_quotes
+):
+    """days_back>1：大盤指數收盤數據其實是當日漲跌（Finnhub 免費版無歷史 K
+    線），system prompt 與 user_content 都須要求標註為「當日」，不得表述成
+    整段期間的變化。"""
+    ms.refresh_news(days_back=7)
+    mock_groq.chat.completions.create.return_value = _text_response("*📊 Big 7 動態* 摘要內容")
+
+    ms.generate_market_summary(days_back=7)
+
+    messages = mock_groq.chat.completions.create.call_args.kwargs["messages"]
+    assert "當日" in messages[0]["content"]
+    assert "不得表述成整段期間的變化" in messages[1]["content"]
+    assert "[大盤收盤（當日漲跌）]" in messages[1]["content"]
+
+
 # ---------------------------------------------------------------------------
 # push_daily_summary: CLI/cron entry
 # ---------------------------------------------------------------------------

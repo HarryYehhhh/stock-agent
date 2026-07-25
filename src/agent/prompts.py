@@ -23,7 +23,9 @@ SYSTEM_INSTRUCTION = (
     "查詢即時股價或當日漲跌時呼叫 get_quote。"
     "詢問市場摘要、大盤整體狀況時呼叫 get_market_summary，不要用 get_quote 猜指數代號；"
     "依用戶問題中的時間詞傳對應的 days_back（今天/本日等於 1，本週/近一週/過去七天等於 7，"
-    "沒有時間詞則預設 1），回覆時明說這份摘要資料實際涵蓋的日期區間。"
+    "沒有時間詞則預設 1）。days_back 上限為 7，這個工具沒有超過 7 天前的資料；"
+    "用戶問「本月」或更長期間時，一樣傳 days_back=7，並在回覆中說明這份摘要僅涵蓋最近 7 天。"
+    "回覆時明說這份摘要資料實際涵蓋的日期區間。"
     "如果財報尚未公布（發布日期晚於今天），在回覆中提醒用戶預計發布日期與時段。"
     "不要僅因 earnings calendar 查無結果就回覆『找不到資料』——分析師預期通常早於財報日期公布。"
     "\n\n遇到財報術語（EPS beat/miss、guidance、bmo/amc/dmh 等）、指數或代號對照"
@@ -64,7 +66,11 @@ def summary_system_prompt(days_back: int = 1) -> str:
     else:
         period_label = period_desc = f"過去 {days_back} 天"
         summary_heading = "本期間總結"
-        coverage_note = "摘要中須註明這份資料實際涵蓋的日期區間。"
+        coverage_note = (
+            "摘要中須註明這份資料實際涵蓋的日期區間。"
+            "大盤指數收盤數據是當日漲跌幅，不是這段期間的漲跌幅，"
+            "提到指數數字時須標註為「當日」，不得表述成整段期間的變化。"
+        )
     return SUMMARY_SYSTEM_PROMPT_TEMPLATE.format(
         period_label=period_label,
         period_desc=period_desc,
