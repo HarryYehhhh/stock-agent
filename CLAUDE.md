@@ -46,6 +46,7 @@ Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. 
 | `earnings-agent-conversations` | `chat_id` (S) | `timestamp` (S) | `ttl` (30 天) | 對話紀錄 |
 | `earnings-agent-subscribers` | `chat_id` (S) | — | — | 訂閱者（含 `active` flag） |
 | `earnings-agent-processed-updates` | `update_id` (N) | — | `ttl` (1 小時) | Telegram update dedup |
+| `earnings-agent-rate-limits` | `chat_id` (S) | `window_key` (S) | `ttl` (分鐘窗 2 分鐘 / 日窗 26 小時) | 每 chat_id 分鐘窗（3 則）與日窗（15 則）計數 |
 
 ## Cost Estimate
 

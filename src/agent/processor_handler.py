@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timedelta, timezone
 
 from aws_lambda_powertools import Logger
 
 from agent.agent import run_agent
-from agent.db.conversations import build_messages, save_message
+from agent.db.conversations import build_messages, get_history, save_message
 from agent.db.subscribers import subscribe, unsubscribe
 from agent.db.watchlist import (
     add_to_watchlist,
@@ -23,6 +24,9 @@ logger = Logger()
 WATCH_USAGE = "用法：/watch <SYMBOL>，例如 /watch AAPL"
 UNWATCH_USAGE = "用法：/unwatch <SYMBOL>，例如 /unwatch AAPL"
 LOCAL_ONLY_MESSAGE = "⚠️ 目前僅本地模式支援自訂追蹤清單。"
+
+REPLAY_WINDOW = timedelta(minutes=10)
+REPLAY_PREFIX = "（與上題相同，以下為稍早的回覆）\n"
 
 # US ticker：1-10 個字母，可選 . 或 - 接 1-3 個字母後綴（例如 BRK.B、BF-B）
 SYMBOL_RE = re.compile(r"[A-Z]{1,10}([.\-][A-Z]{1,3})?")
@@ -40,6 +44,30 @@ WELCOME = (
     "/watch <SYMBOL> — 新增追蹤股票，例如 /watch AAPL\n"
     "/unwatch <SYMBOL> — 移除追蹤股票，例如 /unwatch AAPL"
 )
+
+
+def _find_replay(chat_id: str, text: str) -> str | None:
+    """If the most recent stored exchange was the same user text (stripped)
+    within REPLAY_WINDOW, return its stored assistant reply so the caller can
+    resend it without calling run_agent(). Only checks the single most recent
+    user/assistant pair; does not search further back in history."""
+    history = get_history(chat_id, limit=2)
+    if len(history) != 2:
+        return None
+    prev_user, prev_assistant = history
+    if prev_user["role"] != "user" or prev_assistant["role"] != "assistant":
+        return None
+    if prev_user["content"].strip() != text:
+        return None
+    try:
+        prev_time = datetime.fromisoformat(prev_user["timestamp"])
+    except (KeyError, ValueError):
+        return None
+    if prev_time.tzinfo is None:
+        prev_time = prev_time.replace(tzinfo=timezone.utc)
+    if datetime.now(timezone.utc) - prev_time > REPLAY_WINDOW:
+        return None
+    return prev_assistant["content"]
 
 
 def _process_update(body: dict) -> None:
@@ -112,6 +140,11 @@ def _process_update(body: dict) -> None:
             send_message(chat_id, f"✅ 已將 {symbol} 從追蹤清單移除")
         else:
             send_message(chat_id, f"ℹ️ {symbol} 不在您的追蹤清單中")
+        return
+
+    replay_reply = _find_replay(chat_id, text)
+    if replay_reply is not None:
+        send_message(chat_id, REPLAY_PREFIX + replay_reply)
         return
 
     send_typing_action(chat_id)

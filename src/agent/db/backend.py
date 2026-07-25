@@ -24,6 +24,7 @@ from agent.config import (
     earnings_notifications_table,
     news_table,
     processed_updates_table,
+    rate_limits_table,
     subscribers_table,
     watchlist_table,
 )
@@ -80,6 +81,10 @@ class StorageBackend(Protocol):
     def get_all_active(self) -> list[str]: ...
 
     def claim_update_id(self, update_id: int) -> bool: ...
+
+    def increment_rate_limit(self, chat_id: str, window_key: str, ttl: int) -> int: ...
+
+    def mark_rate_limit_notified(self, chat_id: str, window_key: str) -> bool: ...
 
     def get_watchlist(self, chat_id: str) -> list[dict]: ...
 
@@ -273,6 +278,18 @@ class LocalSQLiteBackend:
                     summary TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (symbol, earning_date)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS rate_limits (
+                    chat_id TEXT NOT NULL,
+                    window_key TEXT NOT NULL,
+                    hit_count INTEGER NOT NULL,
+                    notified INTEGER NOT NULL DEFAULT 0,
+                    ttl INTEGER NOT NULL,
+                    PRIMARY KEY (chat_id, window_key)
                 )
                 """
             )
@@ -693,6 +710,34 @@ class LocalSQLiteBackend:
         except sqlite3.IntegrityError:
             return False
 
+    def increment_rate_limit(self, chat_id: str, window_key: str, ttl: int) -> int:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO rate_limits (chat_id, window_key, hit_count, notified, ttl)
+                VALUES (?, ?, 1, 0, ?)
+                ON CONFLICT(chat_id, window_key) DO UPDATE SET
+                    hit_count = hit_count + 1
+                """,
+                (chat_id, window_key, ttl),
+            )
+            row = conn.execute(
+                "SELECT hit_count FROM rate_limits WHERE chat_id = ? AND window_key = ?",
+                (chat_id, window_key),
+            ).fetchone()
+        return row["hit_count"]
+
+    def mark_rate_limit_notified(self, chat_id: str, window_key: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                UPDATE rate_limits SET notified = 1
+                WHERE chat_id = ? AND window_key = ? AND notified = 0
+                """,
+                (chat_id, window_key),
+            )
+        return cur.rowcount > 0
+
     def export_rows(self) -> dict[str, list[dict[str, Any]]]:
         with self._connect() as conn:
             conversations = [
@@ -791,6 +836,7 @@ class DynamoDBBackend:
         self._earnings_notifications = resource.Table(earnings_notifications_table())
         self._company_summaries = resource.Table(company_summaries_table())
         self._news = resource.Table(news_table())
+        self._rate_limits = resource.Table(rate_limits_table())
 
     def save_message(self, chat_id: str, role: str, content: str) -> None:
         self._conversations.put_item(
@@ -852,6 +898,33 @@ class DynamoDBBackend:
             self._processed_updates.put_item(
                 Item={"update_id": update_id, "ttl": int(time.time()) + DEDUP_TTL_SECONDS},
                 ConditionExpression="attribute_not_exists(update_id)",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise
+
+    def increment_rate_limit(self, chat_id: str, window_key: str, ttl: int) -> int:
+        resp = self._rate_limits.update_item(
+            Key={"chat_id": chat_id, "window_key": window_key},
+            UpdateExpression="SET #ttl = if_not_exists(#ttl, :ttl) ADD hit_count :incr",
+            ExpressionAttributeNames={"#ttl": "ttl"},
+            ExpressionAttributeValues={":incr": 1, ":ttl": ttl},
+            ReturnValues="UPDATED_NEW",
+        )
+        return int(resp["Attributes"]["hit_count"])
+
+    def mark_rate_limit_notified(self, chat_id: str, window_key: str) -> bool:
+        """Atomically flip the notified flag. Returns True only for the caller
+        that first sets it, so the "please slow down" reply is sent once per
+        window."""
+        try:
+            self._rate_limits.update_item(
+                Key={"chat_id": chat_id, "window_key": window_key},
+                UpdateExpression="SET notified = :true",
+                ConditionExpression="attribute_not_exists(notified)",
+                ExpressionAttributeValues={":true": True},
             )
             return True
         except ClientError as e:

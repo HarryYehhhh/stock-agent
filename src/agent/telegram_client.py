@@ -41,6 +41,21 @@ def send_message(chat_id: str, text: str, parse_mode: str = "Markdown") -> None:
             r.raise_for_status()
 
 
+def send_plain_message(chat_id: str, text: str, timeout: float = 3.0) -> None:
+    """Single-shot, low-latency send: no Markdown, no HTTP-error retry
+    fallback, short per-request timeout. For callers on a tight timeout
+    budget (e.g. the 10s webhook Lambda) that must not risk send_message()'s
+    worst case (~2x the client's 10s timeout across the Markdown retry).
+    Raises on failure — the caller is responsible for catching it.
+    """
+    r = _client().post(
+        "/sendMessage",
+        json={"chat_id": chat_id, "text": text},
+        timeout=timeout,
+    )
+    r.raise_for_status()
+
+
 def send_typing_action(chat_id: str) -> None:
     try:
         _client().post("/sendChatAction", json={"chat_id": chat_id, "action": "typing"})

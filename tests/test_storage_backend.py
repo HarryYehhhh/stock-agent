@@ -458,6 +458,54 @@ def test_dynamodb_list_news_since_filters_orders_and_shapes_rows(aws):
     assert row["published_at"] == "2026-07-23T12:00:00Z"
 
 
+def test_local_backend_increment_rate_limit_counts_per_chat_and_window(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+
+    assert backend.increment_rate_limit("111", "minute#1", ttl=999) == 1
+    assert backend.increment_rate_limit("111", "minute#1", ttl=999) == 2
+    # Different chat_id / window are independent counters.
+    assert backend.increment_rate_limit("222", "minute#1", ttl=999) == 1
+    assert backend.increment_rate_limit("111", "minute#2", ttl=999) == 1
+
+
+def test_local_backend_mark_rate_limit_notified_is_conditional(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.increment_rate_limit("111", "minute#1", ttl=999)
+
+    assert backend.mark_rate_limit_notified("111", "minute#1") is True
+    assert backend.mark_rate_limit_notified("111", "minute#1") is False
+    # A different window is independent.
+    backend.increment_rate_limit("111", "minute#2", ttl=999)
+    assert backend.mark_rate_limit_notified("111", "minute#2") is True
+
+
+def test_dynamodb_backend_increment_rate_limit_counts_per_chat_and_window(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+
+    assert backend.increment_rate_limit("111", "minute#1", ttl=9999999999) == 1
+    assert backend.increment_rate_limit("111", "minute#1", ttl=9999999999) == 2
+    assert backend.increment_rate_limit("222", "minute#1", ttl=9999999999) == 1
+    assert backend.increment_rate_limit("111", "minute#2", ttl=9999999999) == 1
+
+
+def test_dynamodb_backend_mark_rate_limit_notified_is_conditional(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.increment_rate_limit("111", "minute#1", ttl=9999999999)
+
+    assert backend.mark_rate_limit_notified("111", "minute#1") is True
+    assert backend.mark_rate_limit_notified("111", "minute#1") is False
+    backend.increment_rate_limit("111", "minute#2", ttl=9999999999)
+    assert backend.mark_rate_limit_notified("111", "minute#2") is True
+
+
 def test_dynamodb_insert_market_summary_is_a_noop(aws):
     from agent.db.backend import get_backend
 

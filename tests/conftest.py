@@ -23,6 +23,7 @@ EARNINGS_CALENDAR = "test-earnings-calendar"
 EARNINGS_NOTIFICATIONS = "test-earnings-notifications"
 COMPANY_SUMMARIES = "test-company-summaries"
 NEWS = "test-news"
+RATE_LIMITS = "test-rate-limits"
 QUEUE_NAME = "test-updates"
 
 
@@ -40,6 +41,7 @@ def env(monkeypatch):
     monkeypatch.setenv("EARNINGS_NOTIFICATIONS_TABLE", EARNINGS_NOTIFICATIONS)
     monkeypatch.setenv("COMPANY_SUMMARIES_TABLE", COMPANY_SUMMARIES)
     monkeypatch.setenv("NEWS_TABLE", NEWS)
+    monkeypatch.setenv("RATE_LIMITS_TABLE", RATE_LIMITS)
     monkeypatch.setenv("FINNHUB_API_KEY", "fake-finnhub")
     monkeypatch.setenv("GROQ_API_KEY", "fake-groq")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot")
@@ -159,6 +161,18 @@ def aws():
                     ],
                     "Projection": {"ProjectionType": "ALL"},
                 }
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName=RATE_LIMITS,
+            KeySchema=[
+                {"AttributeName": "chat_id", "KeyType": "HASH"},
+                {"AttributeName": "window_key", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "chat_id", "AttributeType": "S"},
+                {"AttributeName": "window_key", "AttributeType": "S"},
             ],
             BillingMode="PAY_PER_REQUEST",
         )

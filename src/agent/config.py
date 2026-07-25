@@ -91,6 +91,10 @@ def news_table() -> str:
     return os.environ.get("NEWS_TABLE", "earnings-agent-news")
 
 
+def rate_limits_table() -> str:
+    return os.environ.get("RATE_LIMITS_TABLE", "earnings-agent-rate-limits")
+
+
 def updates_queue_url() -> str:
     return os.environ["UPDATES_QUEUE_URL"]
 

@@ -15,6 +15,14 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-26 — rate-limit-and-replay（round 2，最終） — evaluator — ✅ Pass
+- 連結：docs/qa-reports/rate-limit-and-replay.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 310 passed/12 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 322/322 passed（與 generator 自報一致）；🔴 0、🟡 0；循環次數 2；未解 P0/P1 0/0。round 1 的 🔴（`increment_rate_limit` UpdateExpression 子句順序 `ADD...SET` 違反 DynamoDB 官方 `SET,REMOVE,ADD,DELETE` 固定順序）已修正為 `SET...ADD`；round 1 的 🟡（webhook 內同步呼叫 Telegram 有超過 10s Lambda timeout 風險）已修正為新增 `send_plain_message(timeout=3.0)` 且無 Markdown 重試；另外 `check_rate_limit()` 呼叫本身也補了 fail-open try/except，新增 `test_rate_limit_check_failure_fails_open_and_still_enqueues` 實際檢查 SQS 收到訊息（非只信任回傳值）驗證行為。可合併。
+
+## 2026-07-26 — rate-limit-and-replay（round 1） — evaluator — ❌ Fail
+- 連結：docs/qa-reports/rate-limit-and-replay.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 309 passed/12 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 321/321 passed（與 generator 自報一致）；🔴 1、🟡 1；循環次數 1；未解 P0 1（`DynamoDBBackend.increment_rate_limit` 的 `UpdateExpression` 子句順序為 `ADD ... SET ...`，疑似違反 DynamoDB 官方要求的 `SET, REMOVE, ADD, DELETE` 固定順序，moto 測試偽陽性通過，真實環境可能對每則訊息拋 `ValidationException` 且 webhook 未包 try/except，等同全站中斷；建議改成 `SET ... ADD ...`）。其餘需求項目（rate limiter 限流邏輯、通知只發一次的原子性、infra 權限範圍、上一題重放邏輯與不寫史）皆已驗證正確。
+
 ## 2026-07-25 — time-consistency-fixes — evaluator — ✅ Pass
 - 連結：docs/qa-reports/time-consistency-fixes.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 304/304 passed（沙箱下 12 個 `test_local_integration.py` 因 socket bind 被擋，停用沙箱重跑全綠，非 regression）；🔴 0、🟡 0、🟢 2；循環次數 1；未解 P0/P1 0/0。兩條 days_back=1 byte-for-byte 凍結測試獨立比對 diff 確認測試本身未被修改，且 PASS；days_back>1「當日」標註在 system prompt 與 user_content 均到位；`tool_use_failed` 400 重試邏輯與非 `tool_use_failed` 仍拋出、`MAX_TOOL_LOOPS` 耗盡三種情境皆有對應測試且斷言 call_count/訊息內容；確認重試提示不會污染對話歷史（`processor_handler.py` 只存 `text`/`reply`，非整個 `messages`）。

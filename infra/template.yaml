@@ -28,6 +28,7 @@ Globals:
         EARNINGS_NOTIFICATIONS_TABLE: !Ref EarningsNotificationsTable
         COMPANY_SUMMARIES_TABLE: !Ref CompanySummariesTable
         NEWS_TABLE: !Ref NewsTable
+        RATE_LIMITS_TABLE: !Ref RateLimitsTable
         UPDATES_QUEUE_URL: !Ref UpdatesQueue
         POWERTOOLS_SERVICE_NAME: !Ref AppName
         LOG_LEVEL: INFO
@@ -187,6 +188,25 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
+  RateLimitsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AppName}-rate-limits"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: chat_id
+          AttributeType: S
+        - AttributeName: window_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: chat_id
+          KeyType: HASH
+        - AttributeName: window_key
+          KeyType: RANGE
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
   UpdatesQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -219,6 +239,8 @@ Resources:
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref ProcessedUpdatesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref RateLimitsTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt UpdatesQueue.QueueName
         - Statement:
