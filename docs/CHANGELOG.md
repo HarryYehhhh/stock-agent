@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-26 — market-summary-cache — evaluator — ✅ Pass
+- 連結：docs/qa-reports/market-summary-cache.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 299/311 passed（沙箱下 12 個 `test_local_integration.py` 因 socket bind 被擋，停用沙箱重跑全綠 26/26，非 regression，合計 311/311）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。`generate_market_summary` 以 `(summary_date, days_back, news_ids_hash)` 為 key 快取 Groq 輸出，命中不打 Groq 也不重打 `fetch_index_quotes()`；`get_market_summary`/`push_daily_summary` 呼叫端相容性核對皆通過；SQLite `market_summaries` 補三欄 + ALTER TABLE migration（冪等、僅 `_init_schema()` 執行一次）；DynamoDB `insert_market_summary` 由 no-op 改為寫入既有 NewsTable（`bucket="market_summary"`，~2 天 TTL，未動 infra）；ADR-0006 §3 以附加修訂段落記錄，未重寫原文；測試涵蓋同天不重打 Groq（兩個 backend）、news 集合變重打、days_back 不共用、SQLite 舊 schema migration、DynamoDB TTL 屬性正確共 5 類情境。
+
 ## 2026-07-25 — time-consistency-fixes — evaluator — ✅ Pass
 - 連結：docs/qa-reports/time-consistency-fixes.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 304/304 passed（沙箱下 12 個 `test_local_integration.py` 因 socket bind 被擋，停用沙箱重跑全綠，非 regression）；🔴 0、🟡 0、🟢 2；循環次數 1；未解 P0/P1 0/0。兩條 days_back=1 byte-for-byte 凍結測試獨立比對 diff 確認測試本身未被修改，且 PASS；days_back>1「當日」標註在 system prompt 與 user_content 均到位；`tool_use_failed` 400 重試邏輯與非 `tool_use_failed` 仍拋出、`MAX_TOOL_LOOPS` 耗盡三種情境皆有對應測試且斷言 call_count/訊息內容；確認重試提示不會污染對話歷史（`processor_handler.py` 只存 `text`/`reply`，非整個 `messages`）。

@@ -1,8 +1,9 @@
 """Daily market summary tool wrapping agent.market_summary.generate_market_summary.
 
-Generates the summary on demand from stored news + live index quotes (both
-backends have news; DynamoDB's insert_market_summary is a no-op, so there is
-nothing persisted to read back — see ADR-0006).
+Generates the summary on demand from stored news + live index quotes.
+`generate_market_summary` caches its Groq output per (date, days_back,
+news set), so a repeat call on the same day with the same inputs returns
+the cached summary without calling Groq again (see ADR-0006 §3 revision).
 
 Note: agent.market_summary imports agent.agent, which imports agent.tools
 (this package) — importing generate_market_summary at module level here

@@ -219,6 +219,89 @@ def test_generate_summary_days_back_1_user_content_is_byte_for_byte_identical_to
     assert messages[1]["content"] == expected_user_content
 
 
+def test_generate_summary_cache_hit_skips_groq_and_reuses_summary(
+    local_store, mock_finnhub, mock_groq, mock_quotes
+):
+    """Second call same day, same days_back, same selected news: no Groq
+    call, same summary text returned (ADR-0006 §3 revision)."""
+    ms.refresh_news(days_back=1)
+    mock_groq.chat.completions.create.return_value = _text_response("*📊 Big 7 動態* 摘要內容")
+
+    out1 = ms.generate_market_summary(days_back=1)
+    out2 = ms.generate_market_summary(days_back=1)
+
+    assert out1["summary"] == out2["summary"]
+    mock_groq.chat.completions.create.assert_called_once()
+
+
+def test_generate_summary_cache_hit_skips_groq_on_dynamodb_backend(
+    aws, mock_finnhub, mock_groq, mock_quotes
+):
+    """Same cache behavior, but on DynamoDBBackend (ADR-0006 §3 revision)."""
+    ms.refresh_news(days_back=1)
+    mock_groq.chat.completions.create.return_value = _text_response("*📊 Big 7 動態* 摘要內容")
+
+    out1 = ms.generate_market_summary(days_back=1)
+    out2 = ms.generate_market_summary(days_back=1)
+
+    assert out1["summary"] == out2["summary"]
+    mock_groq.chat.completions.create.assert_called_once()
+
+
+def test_generate_summary_cache_miss_when_news_set_changes(
+    local_store, mock_groq, mock_quotes, monkeypatch
+):
+    """A different selected-news set (different news_ids_hash) must call
+    Groq again even on the same day with the same days_back."""
+    extra = {"enabled": False}
+
+    def fake_company_news(symbol, date_from, date_to):
+        return [{"headline": f"{symbol} story", "summary": "s", "datetime": 1_800_000_000}]
+
+    def fake_tech_news():
+        items = [{"headline": "AI story one", "summary": "AI", "datetime": 1_800_000_000}]
+        if extra["enabled"]:
+            items.append({"headline": "AI story two", "summary": "AI", "datetime": 1_800_000_000})
+        return items
+
+    monkeypatch.setattr(ms, "_fetch_company_news", fake_company_news)
+    monkeypatch.setattr(ms, "_fetch_tech_news", fake_tech_news)
+    mock_groq.chat.completions.create.side_effect = [
+        _text_response("first"),
+        _text_response("second"),
+    ]
+
+    ms.refresh_news(days_back=1)
+    out1 = ms.generate_market_summary(days_back=1)
+    assert out1["summary"].endswith("first")
+
+    extra["enabled"] = True
+    ms.refresh_news(days_back=1)
+    out2 = ms.generate_market_summary(days_back=1)
+
+    assert out2["summary"].endswith("second")
+    assert mock_groq.chat.completions.create.call_count == 2
+
+
+def test_generate_summary_cache_not_shared_across_days_back(
+    local_store, mock_finnhub, mock_groq, mock_quotes
+):
+    """Same news set, different days_back: each days_back gets its own Groq
+    call (cache key includes days_back)."""
+    mock_groq.chat.completions.create.side_effect = [
+        _text_response("summary-1"),
+        _text_response("summary-7"),
+    ]
+    ms.refresh_news(days_back=7)
+
+    out1 = ms.generate_market_summary(days_back=1)
+    out7 = ms.generate_market_summary(days_back=7)
+
+    assert out1["summary"].endswith("summary-1")
+    assert out7["summary"].endswith("summary-7")
+    assert mock_groq.chat.completions.create.call_count == 2
+
+
 def test_generate_summary_skips_groq_when_store_empty(local_store, mock_groq, mock_quotes):
     out = ms.generate_market_summary()
 

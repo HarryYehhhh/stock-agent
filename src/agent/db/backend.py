@@ -34,6 +34,7 @@ EARNINGS_CALENDAR_TTL_SECONDS = 45 * 24 * 3600
 EARNINGS_NOTIFICATIONS_TTL_SECONDS = 30 * 24 * 3600
 COMPANY_SUMMARIES_TTL_SECONDS = 30 * 24 * 3600
 NEWS_TTL_SECONDS = 14 * 24 * 3600
+MARKET_SUMMARY_TTL_SECONDS = 2 * 24 * 3600
 DEFAULT_LOCAL_STORE_PATH = ".local/earnings-agent.sqlite3"
 
 
@@ -121,7 +122,18 @@ class StorageBackend(Protocol):
 
     def list_news_since(self, published_from: str) -> list[dict]: ...
 
-    def insert_market_summary(self, summary: str, news_ids: list) -> None: ...
+    def insert_market_summary(
+        self,
+        summary: str,
+        news_ids: list,
+        summary_date: str,
+        days_back: int,
+        news_ids_hash: str,
+    ) -> Any: ...
+
+    def get_cached_market_summary(
+        self, summary_date: str, days_back: int, news_ids_hash: str
+    ) -> dict | None: ...
 
 
 @lru_cache(maxsize=1)
@@ -254,6 +266,19 @@ class LocalSQLiteBackend:
                 )
                 """
             )
+            # Migrate pre-existing DBs created before the cache columns
+            # existed. Old rows keep these NULL, so they never match a cache
+            # lookup (summary_date/days_back/news_ids_hash all compared with
+            # `=`) and effectively expire on their own.
+            market_summaries_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(market_summaries)")
+            }
+            if "summary_date" not in market_summaries_columns:
+                conn.execute("ALTER TABLE market_summaries ADD COLUMN summary_date TEXT")
+            if "days_back" not in market_summaries_columns:
+                conn.execute("ALTER TABLE market_summaries ADD COLUMN days_back INTEGER")
+            if "news_ids_hash" not in market_summaries_columns:
+                conn.execute("ALTER TABLE market_summaries ADD COLUMN news_ids_hash TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS earnings_notifications (
@@ -667,20 +692,48 @@ class LocalSQLiteBackend:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def insert_market_summary(self, summary: str, news_ids: list[int]) -> int:
+    def insert_market_summary(
+        self,
+        summary: str,
+        news_ids: list[int],
+        summary_date: str,
+        days_back: int,
+        news_ids_hash: str,
+    ) -> int:
         with self._connect() as conn:
             cur = conn.execute(
                 """
-                INSERT INTO market_summaries (created_at, summary, news_ids)
-                VALUES (?, ?, ?)
+                INSERT INTO market_summaries (
+                    created_at, summary, news_ids, summary_date, days_back, news_ids_hash
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     datetime.now(timezone.utc).isoformat(),
                     summary,
                     json.dumps(news_ids),
+                    summary_date,
+                    days_back,
+                    news_ids_hash,
                 ),
             )
             return cur.lastrowid
+
+    def get_cached_market_summary(
+        self, summary_date: str, days_back: int, news_ids_hash: str
+    ) -> dict[str, Any] | None:
+        """Most recent stored summary matching the cache key, or None."""
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT id, summary FROM market_summaries
+                WHERE summary_date = ? AND days_back = ? AND news_ids_hash = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (summary_date, days_back, news_ids_hash),
+            ).fetchone()
+        return dict(row) if row else None
 
     def claim_update_id(self, update_id: int) -> bool:
         try:
@@ -1169,9 +1222,42 @@ class DynamoDBBackend:
             for item in items
         ]
 
-    def insert_market_summary(self, summary: str, news_ids: list) -> None:
-        """No-op: the cloud backend doesn't persist market summaries — it's a
-        write-only audit log that production never reads back, and its
-        news_ids audit trail is tied to sqlite autoincrement ids that don't
-        map onto DynamoDB's headline PK (ADR-0006 §3)."""
-        return None
+    def insert_market_summary(
+        self,
+        summary: str,
+        news_ids: list,
+        summary_date: str,
+        days_back: int,
+        news_ids_hash: str,
+    ) -> None:
+        """Persist a Groq-generated summary as a Groq-call cache entry, keyed
+        by (summary_date, days_back, news_ids_hash) so a repeat call with the
+        same inputs can skip the Groq call (ADR-0006 §3 revision,
+        2026-07-26). Stored in NewsTable under a distinct
+        `bucket="market_summary"` / `headline`-PK cache key so no new table
+        is needed; a short TTL is enough since it only needs to survive
+        same-day cache hits plus slack for cross-midnight retries."""
+        self._news.put_item(
+            Item={
+                "headline": f"SUMMARY#{summary_date}#{days_back}#{news_ids_hash}",
+                "bucket": "market_summary",
+                "summary": summary,
+                "news_ids": json.dumps(news_ids),
+                "summary_date": summary_date,
+                "days_back": days_back,
+                "news_ids_hash": news_ids_hash,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "ttl": int(time.time()) + MARKET_SUMMARY_TTL_SECONDS,
+            }
+        )
+
+    def get_cached_market_summary(
+        self, summary_date: str, days_back: int, news_ids_hash: str
+    ) -> dict[str, Any] | None:
+        resp = self._news.get_item(
+            Key={"headline": f"SUMMARY#{summary_date}#{days_back}#{news_ids_hash}"}
+        )
+        item = resp.get("Item")
+        if not item:
+            return None
+        return {"id": item["headline"], "summary": item["summary"]}
