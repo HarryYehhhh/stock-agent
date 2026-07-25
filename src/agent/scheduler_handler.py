@@ -36,6 +36,7 @@ from aws_lambda_powertools import Logger
 from agent.agent import run_agent
 from agent.db.backend import get_backend
 from agent.market_summary import push_daily_summary, refresh_news
+from agent.prompts import COMPANY_PROMPT_TEMPLATE
 from agent.telegram_client import send_message
 from agent.tools.earnings import get_earnings_calendar
 
@@ -43,14 +44,6 @@ logger = Logger()
 
 SYNC_DAYS = 30
 MAX_DATA_AGE_HOURS = 24
-
-COMPANY_PROMPT_TEMPLATE = (
-    "明天（{tomorrow}）{symbol}將公布財報，快取資料：{row}\n\n"
-    "請用繁體中文寫 2-3 句的財報前瞻摘要：財報時間（盤前/盤後/盤中）、"
-    "分析師 EPS 預期與營收預期，以及一句該公司近期值得注意的重點。"
-    "輸出使用 Telegram Markdown（粗體寫成 *text*，不要使用 ** 或 __），"
-    "第一行以 *{symbol}* 開頭，不要加其他標題。"
-)
 
 
 def sync_earnings() -> list[str]:
