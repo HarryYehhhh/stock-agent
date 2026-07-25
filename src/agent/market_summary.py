@@ -279,17 +279,17 @@ def push_daily_summary(refresh: bool = True) -> None:
         refresh_news(days_back=1)
     result = generate_market_summary(days_back=1)
 
+    summary_date = date.today().isoformat()
     if not result["news"]["big7"] and not result["news"]["ai"]:
-        log.info("no news to summarize, skip push")
+        log.info("no news to summarize, skip push (date=%s)", summary_date)
         return
 
     subscribers = get_all_active()
     if not subscribers:
-        log.info("no active subscribers, skip push")
+        log.info("no active subscribers, skip push (date=%s)", summary_date)
         return
 
     backend = get_backend()
-    summary_date = date.today().isoformat()
     sent = 0
     for chat_id in subscribers:
         if backend.summary_notified(chat_id, summary_date):

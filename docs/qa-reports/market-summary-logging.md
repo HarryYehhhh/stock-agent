@@ -48,3 +48,51 @@
 ## 結論
 - 是否可合併：是
 - 最該先處理的 1–3 件事：無（本次無 Critical/Warning，🟢 Suggestion 為選配，不影響合併）
+
+---
+
+# Follow-up QA：skip log 補 summary_date（2026-07-25）
+
+- **Contract**：無 contract（承接上方 Suggestion，需求已釐清後直接對照「原始需求 + 程式碼品質」驗收）
+- **Date**: 2026-07-25
+- **Verdict**: ✅ PASS
+
+## 需求 checklist
+| 項目 | Status | Note |
+|---|---|---|
+| `summary_date` 提前到兩條 skip log 之前計算 | ✅ | market_summary.py:282，位於 no-news 檢查前 |
+| `summary_date` 只計算一次、不重複賦值 | ✅ | 原第 292 行的重複賦值已移除，後續迴圈沿用同一變數 |
+| 兩條 skip log 補上 `summary_date` | ✅ | market_summary.py:284 `"no news to summarize, skip push (date=%s)", summary_date`；market_summary.py:289 `"no active subscribers, skip push (date=%s)", summary_date` |
+| 沿用 `%s` lazy formatting（不是 f-string） | ✅ | 兩處都是 `log.info("...%s)", summary_date)` 位置參數形式，與檔案內既有慣例一致 |
+| `date` import 未新增（沿用既有） | ✅ | market_summary.py:14 `from datetime import date, ...` 本來就有，diff 未動 import 區 |
+| diff surgical，無多餘改動 | ✅ | `git diff HEAD` 只有 3 處變動：新增一行 `summary_date = ...`、兩處 log 字串加 `(date=%s)` 參數、移除一行重複賦值，共 +3/-3，未動其他邏輯/註解/格式 |
+| 現有測試全綠、無 regression | ✅ | 見下方 Test results |
+
+## Test results
+- 測試指令：`cd /Users/yehhungwei/stock-agent-worktrees/market-summary-logging && PYTHONPATH=src uv run pytest tests/ -v`
+- 結果（沙箱模式）：223 passed，12 errors（全數為 `tests/test_local_integration.py` 的 `PermissionError: [Errno 1] Operation not permitted`，`ThreadingHTTPServer.socket.bind` 在沙箱內被擋，與本次改動無關）
+- 結果（停用沙箱重跑 `tests/test_local_integration.py`）：26 passed，確認純屬環境限制非 regression
+- `tests/test_market_summary.py` 單獨執行：18 passed，含兩個 skip 情境測試（`test_push_daily_summary_skips_send_when_no_news`、`test_push_daily_summary_skips_send_when_no_subscribers`），兩者皆未斷言 log 文字，因此改動不影響其判定，符合預期
+- 失敗測試：無
+- 既有 suite regression：✅ 無
+
+## Findings
+
+### 🔴 Critical（Must Fix）
+無。
+
+### 🟡 Warnings（Should Fix）
+無。
+
+### 🟢 Suggestions
+- 兩個 skip log 情境目前沒有測試斷言 `date=` 有出現在訊息中（延續前一輪 `test_push_daily_summary_logs_pushed_count` 的作法，可用 `caplog` 加一條輕量測試鎖住格式）。因為本次需求明確只要求補 log 內容、現有測試全綠，未要求新增測試，故不列為 Warning，純屬選配加強。
+
+### ✅ What looks good
+- **debugging 價值確實存在**：`summary_date` 是 `backend.summary_notified`/`mark_summary_notified` 用來做 per-day 冪等判斷的 key，把它帶進兩條 skip log 後，排查「今天到底有沒有觸發推播判斷、判斷用的是哪個 date」時可直接對照冪等紀錄，比單靠 CloudWatch log stream 的 wall-clock timestamp 更精準（尤其若排程延遲跨日執行）。
+- **共用變數、無重複計算**：確認 `summary_date` 全函式只計算一次（第 282 行），原本第 292 行的重複賦值已移除，避免了理論上呼叫間隔導致兩次 `date.today()` 取到不同日期的疑慮（雖然機率極低，但移除後更嚴謹）。
+- **訊息格式與既有慣例一致**：`"...skip push (date=%s)"` 的 `(key=value)` 後綴格式與同檔案 `refresh_news` 的 `"refresh_news: inserted %d new rows (days_back=%d)"` 用同一種風格，讀起來一致。
+- **極度 surgical**：整個 diff 只有 6 行變動（+3/-3），完全對應描述的三個動作，沒有動到任何無關程式碼。
+
+## 結論
+- 是否可合併：是
+- 最該先處理的 1–3 件事：無
