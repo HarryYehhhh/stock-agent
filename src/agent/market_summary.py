@@ -10,9 +10,10 @@ its inputs.
 
 from __future__ import annotations
 
-import logging
 import re
 from datetime import date, datetime, timedelta, timezone
+
+from aws_lambda_powertools import Logger
 
 from agent.agent import MODEL, _client
 from agent.config import finnhub_api_key
@@ -24,7 +25,7 @@ from agent.tools._http import client
 from agent.tools.news import is_junk_headline
 from agent.tools.quote import get_quote
 
-log = logging.getLogger(__name__)
+log = Logger()
 
 BIG7 = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
 
@@ -132,7 +133,9 @@ def refresh_news(days_back: int = 1) -> int:
         if picked >= MAX_STORE_AI:
             break
 
-    return get_backend().insert_news(items)
+    inserted = get_backend().insert_news(items)
+    log.info("refresh_news: inserted %d new rows (days_back=%d)", inserted, days_back)
+    return inserted
 
 
 def list_stored_news(days_back: int = 1) -> list[dict]:
@@ -265,17 +268,18 @@ def push_daily_summary(refresh: bool = True) -> None:
         refresh_news(days_back=1)
     result = generate_market_summary(days_back=1)
 
+    summary_date = date.today().isoformat()
     if not result["news"]["big7"] and not result["news"]["ai"]:
-        log.info("no news to summarize, skip push")
+        log.info("no news to summarize, skip push (date=%s)", summary_date)
         return
 
     subscribers = get_all_active()
     if not subscribers:
-        log.info("no active subscribers, skip push")
+        log.info("no active subscribers, skip push (date=%s)", summary_date)
         return
 
     backend = get_backend()
-    summary_date = date.today().isoformat()
+    sent = 0
     for chat_id in subscribers:
         if backend.summary_notified(chat_id, summary_date):
             continue
@@ -285,8 +289,9 @@ def push_daily_summary(refresh: bool = True) -> None:
             log.exception("failed to push market summary to %s", chat_id)
             continue
         backend.mark_summary_notified(chat_id, summary_date)
+        sent += 1
+    log.info("push_daily_summary: pushed to %d/%d active subscribers", sent, len(subscribers))
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     push_daily_summary()

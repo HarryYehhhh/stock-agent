@@ -15,6 +15,14 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-25 — market-summary-logging（follow-up） — evaluator — ✅ Pass
+- 連結：docs/qa-reports/market-summary-logging.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 223/223 passed + 12 errors（`test_local_integration.py` 沙箱 socket bind 限制，停用沙箱重跑 26/26 passed，非 regression）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。承接上一輪 evaluator suggestion，補上 `push_daily_summary()` 兩條 skip log 的 `summary_date` 上下文，diff 僅 +3/-3 行，surgical。
+
+## 2026-07-25 — market-summary-logging — evaluator — ✅ Pass
+- 連結：docs/qa-reports/market-summary-logging.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 235/235 passed（沙箱環境 socket bind 限制與本次改動無關，停用沙箱後全綠）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。`market_summary.py` 統一改用 `aws_lambda_powertools.Logger`（與 `scheduler_handler.py` 一致），補上 `refresh_news`/`push_daily_summary`/`sync_earnings` 關鍵節點的 structured log，修好 Lambda 環境下 log 靜默的 observability 缺口；已用暫時破壞 log 訊息文字的方式驗證新測試 `test_push_daily_summary_logs_pushed_count` 會真的 fail。
+
 ## 2026-07-25 — prompts-module — evaluator — ✅ Pass
 - 連結：docs/qa-reports/prompts-module.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 274 passed/12 errors（既有 `test_local_integration.py` socket bind 沙盒限制，非回歸）、非沙盒重跑 286 passed, 0 failed（與 generator 自報一致）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。純重構驗收：獨立用 `git show HEAD:<原檔>` 抽出 `SYSTEM_INSTRUCTION`/`SUMMARY_SYSTEM_PROMPT`/`COMPANY_PROMPT_TEMPLATE` 三個原始字串（不信任 generator 自查），與新 `src/agent/prompts.py` 現值逐一 `==` 比對皆 True；三檔 diff 純「刪定義 + 加 import」，import 排序、blank line 間距均正確；`prompts.py` 除 `from __future__ import annotations` 外零依賴；排除範圍確認守住——`processor_handler.py` diff 為空、`agent.py:77` user_content f-string 組裝邏輯未動；`test_agent.py` 既有斷言透過 re-export 沿用無需修改。

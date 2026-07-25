@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -198,6 +199,21 @@ def test_push_daily_summary_sends_to_all_active_subscribers(push_mocks):
     assert chat_ids == {"111", "222"}
     for call in push_mocks["send"].call_args_list:
         assert "*📊 Big 7 動態* 摘要內容" in call.args[1]
+
+
+def test_push_daily_summary_logs_pushed_count(push_mocks, caplog):
+    """The module-level `log` is an aws_lambda_powertools Logger, which
+    doesn't write through pytest's `capsys` (its stream handler is bound to
+    the original stdout at import time, before capsys patches it). caplog
+    still works because it attaches via the stdlib logging handler/propagate
+    mechanism, which powertools Logger goes through."""
+    with caplog.at_level(logging.INFO):
+        ms.push_daily_summary()
+
+    assert any(
+        "push_daily_summary: pushed to 2/2 active subscribers" in r.message
+        for r in caplog.records
+    )
 
 
 def test_push_daily_summary_skips_send_when_no_news(local_store, mock_groq, mock_quotes, monkeypatch):
