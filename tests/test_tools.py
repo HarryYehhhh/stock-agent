@@ -227,6 +227,16 @@ def test_get_quote_returns_normalized_fields(mock_http):
 
 # --- market summary ---
 
+def test_market_summary_tool_days_back_description_maps_time_phrases():
+    description = market_summary_tool.MARKET_SUMMARY_TOOL["input_schema"]["properties"]["days_back"]["description"]
+
+    assert "today" in description
+    assert "本日" in description
+    assert "-> 1" in description
+    assert "本週" in description
+    assert "-> 7" in description
+
+
 def test_get_market_summary_returns_only_summary(monkeypatch):
     monkeypatch.setattr(
         market_summary_module,
@@ -235,10 +245,11 @@ def test_get_market_summary_returns_only_summary(monkeypatch):
             "summary": "今日市場摘要文字",
             "news": {"big7": [{"headline": "h"}], "ai": [{"headline": "h2"}]},
             "indexes": [{"name": "S&P 500", "symbol": "SPY", "close": 500.0, "change_percent": 1.0}],
+            "date_range": "2026-07-25",
         },
     )
     out = market_summary_tool.get_market_summary()
-    assert out == {"summary": "今日市場摘要文字"}
+    assert out == {"summary": "今日市場摘要文字", "date_range": "2026-07-25"}
     assert "news" not in out
     assert "indexes" not in out
 
@@ -248,7 +259,7 @@ def test_get_market_summary_passes_days_back(monkeypatch):
 
     def fake_generate(days_back):
         calls.append(days_back)
-        return {"summary": "s", "news": {"big7": [], "ai": []}, "indexes": []}
+        return {"summary": "s", "news": {"big7": [], "ai": []}, "indexes": [], "date_range": None}
 
     monkeypatch.setattr(market_summary_module, "generate_market_summary", fake_generate)
     market_summary_tool.get_market_summary(days_back=3)
@@ -260,7 +271,7 @@ def test_get_market_summary_default_days_back_is_one(monkeypatch):
 
     def fake_generate(days_back):
         calls.append(days_back)
-        return {"summary": "s", "news": {"big7": [], "ai": []}, "indexes": []}
+        return {"summary": "s", "news": {"big7": [], "ai": []}, "indexes": [], "date_range": None}
 
     monkeypatch.setattr(market_summary_module, "generate_market_summary", fake_generate)
     market_summary_tool.get_market_summary()

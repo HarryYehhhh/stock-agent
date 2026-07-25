@@ -134,6 +134,24 @@ def test_format_index_block():
     ]
 
 
+def test_compute_date_range_single_day():
+    assert ms._compute_date_range([
+        {"published_at": "2026-07-25T12:00:00+00:00"},
+        {"published_at": "2026-07-25T08:00:00+00:00"},
+    ]) == "2026-07-25"
+
+
+def test_compute_date_range_multi_day():
+    assert ms._compute_date_range([
+        {"published_at": "2026-07-25T12:00:00+00:00"},
+        {"published_at": "2026-07-19T08:00:00+00:00"},
+    ]) == "2026-07-19 ~ 2026-07-25"
+
+
+def test_compute_date_range_no_news():
+    assert ms._compute_date_range([]) is None
+
+
 def test_generate_summary_reads_store_and_persists(
     local_store, mock_finnhub, mock_groq, mock_quotes
 ):
@@ -146,13 +164,19 @@ def test_generate_summary_reads_store_and_persists(
     assert "🔴 S&P 500 (SPY)：742.09（-0.16%）" in out["summary"]
     assert out["summary"].endswith("*📊 Big 7 動態* 摘要內容")
     assert [q["symbol"] for q in out["indexes"]] == ["SPY", "QQQ", "DIA", "IWM"]
+    assert out["date_range"] == "2027-01-15"
     messages = mock_groq.chat.completions.create.call_args.kwargs["messages"]
     assert messages[0]["role"] == "system"
     assert "繁體中文" in messages[0]["content"]
+    assert "每日市場摘要" in messages[0]["content"]
     assert "[大盤收盤]" in messages[1]["content"]
     assert "S&P 500 (SPY): 收盤 742.09, 漲跌 -0.16%" in messages[1]["content"]
     assert "AAPL story 0" in messages[1]["content"]
     assert "New AI model launched" in messages[1]["content"]
+    # days_back=1 must not carry the multi-day coverage note (production's
+    # daily cron pushes this text unmodified — see push_daily_summary).
+    assert "實際涵蓋日期" not in messages[1]["content"]
+    assert "註明這份資料涵蓋的日期區間" not in messages[1]["content"]
 
     # summary persisted with source news ids
     with sqlite3.connect(local_store) as conn:
@@ -166,12 +190,57 @@ def test_generate_summary_reads_store_and_persists(
     assert stored_ids == expected_ids
 
 
+def test_generate_summary_days_back_1_user_content_is_byte_for_byte_identical_to_pre_sprint_baseline(
+    local_store, mock_finnhub, mock_groq, mock_quotes
+):
+    """Production's daily cron (push_daily_summary) always calls this with
+    days_back=1 and pushes the result unmodified to subscribers, so the
+    days_back=1 user_content sent to Groq must stay byte-for-byte identical
+    to the pre-sprint/summary-timewindow baseline (no date-range note)."""
+    from datetime import date as date_cls
+
+    ms.refresh_news(days_back=1)
+    mock_groq.chat.completions.create.return_value = _text_response("摘要內容")
+
+    ms.generate_market_summary(days_back=1)
+
+    messages = mock_groq.chat.completions.create.call_args.kwargs["messages"]
+    index_lines = "\n".join(
+        f"- {q['name']} ({q['symbol']}): 收盤 {q['close']}, 漲跌 {q['change_percent']:+.2f}%"
+        for q in ms.fetch_index_quotes()
+    )
+    news = ms.select_news(days_back=1)
+    expected_user_content = (
+        f"今天日期是 {date_cls.today().isoformat()}。"
+        f"以下是大盤收盤數據與過去 1 天的新聞資料，請產出每日市場摘要：\n\n"
+        f"[大盤收盤]\n{index_lines}\n\n"
+        f"{ms._format_news_block(news)}"
+    )
+    assert messages[1]["content"] == expected_user_content
+
+
 def test_generate_summary_skips_groq_when_store_empty(local_store, mock_groq, mock_quotes):
     out = ms.generate_market_summary()
 
     assert out["summary"].startswith("*📈 大盤收盤指標*")
     assert "請先執行新聞抓取" in out["summary"]
+    assert out["date_range"] is None
     mock_groq.chat.completions.create.assert_not_called()
+
+
+def test_generate_summary_uses_period_wording_for_multi_day_window(
+    local_store, mock_finnhub, mock_groq, mock_quotes
+):
+    ms.refresh_news(days_back=7)
+    mock_groq.chat.completions.create.return_value = _text_response("*📊 Big 7 動態* 摘要內容")
+
+    out = ms.generate_market_summary(days_back=7)
+
+    assert out["date_range"] == "2027-01-15"  # fixture news all share one fake timestamp
+    messages = mock_groq.chat.completions.create.call_args.kwargs["messages"]
+    assert "過去 7 天市場摘要" in messages[0]["content"]
+    assert "每日市場摘要" not in messages[0]["content"]
+    assert "過去 7 天市場摘要" in messages[1]["content"]
 
 
 # ---------------------------------------------------------------------------

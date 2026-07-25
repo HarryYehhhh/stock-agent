@@ -15,6 +15,14 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-25 — summary-timewindow — evaluator — ✅ Pass（round 2 複驗，最終狀態）
+- 連結：docs/qa-reports/summary-timewindow.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 297/297 passed（沙箱下 12 個 `test_local_integration.py` 因 socket bind 被擋，停用沙箱重跑全綠，非 regression）；🔴 0、🟡 0（round 1 的 1 條已回修）、🟢 2；循環次數 2；未解 P0/P1 0/0。回修採修法 (a)：`SUMMARY_SYSTEM_PROMPT_TEMPLATE`/`user_content` 的日期區間提示改為僅 days_back>1 生效，evaluator 獨立比對 `git show HEAD:src/agent/prompts.py` 舊版常數確認 days_back<=1 逐字（byte-for-byte）恢復，並以 mutation 測試驗證新增回歸測試具備真實偵測力。
+
+## 2026-07-25 — summary-timewindow（round 1） — evaluator — ⚠️ Pass with notes
+- 連結：docs/qa-reports/summary-timewindow.md（round 1 段落；本輪因 harness 限制未能落地檔案，由主流程代為寫入）
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 295/295 passed（沙箱下 12 個 `test_local_integration.py` 因 socket bind 被擋，停用沙箱重跑全綠，非 regression）；🔴 0、🟡 1（`SUMMARY_SYSTEM_PROMPT_TEMPLATE` 對 days_back=1 也新增了「須註明日期區間」指示，非需求 5 要求的零變化，會影響 `push_daily_summary()` 每日排程推播的實際文字）、🟢 2；循環次數 1；已於 round 2 回修並複驗通過。
+
 ## 2026-07-25 — market-summary-logging（follow-up） — evaluator — ✅ Pass
 - 連結：docs/qa-reports/market-summary-logging.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 223/223 passed + 12 errors（`test_local_integration.py` 沙箱 socket bind 限制，停用沙箱重跑 26/26 passed，非 regression）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。承接上一輪 evaluator suggestion，補上 `push_daily_summary()` 兩條 skip log 的 `summary_date` 上下文，diff 僅 +3/-3 行，surgical。

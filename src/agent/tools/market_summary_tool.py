@@ -25,7 +25,12 @@ MARKET_SUMMARY_TOOL = {
         "properties": {
             "days_back": {
                 "type": "integer",
-                "description": "How many days of news to cover (1-7, default 1)",
+                "description": (
+                    "How many days of news to cover (1-7, default 1). Map the "
+                    "user's time phrase: today/今天/本日 -> 1, this "
+                    "week/本週/近一週/過去七天 -> 7. Default to 1 when no time "
+                    "phrase is given."
+                ),
                 "minimum": 1,
                 "maximum": 7,
             },
@@ -39,4 +44,4 @@ def get_market_summary(days_back: int = 1) -> dict:
     from agent.market_summary import generate_market_summary
 
     result = generate_market_summary(days_back)
-    return {"summary": result["summary"]}
+    return {"summary": result["summary"], "date_range": result["date_range"]}

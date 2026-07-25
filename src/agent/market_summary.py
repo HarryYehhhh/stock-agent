@@ -19,7 +19,7 @@ from agent.agent import MODEL, _client
 from agent.config import finnhub_api_key
 from agent.db.backend import get_backend
 from agent.db.subscribers import get_all_active
-from agent.prompts import SUMMARY_SYSTEM_PROMPT
+from agent.prompts import summary_system_prompt
 from agent.telegram_client import send_message
 from agent.tools._http import client
 from agent.tools.news import is_junk_headline
@@ -161,6 +161,18 @@ def select_news(days_back: int = 1) -> dict:
     return {"big7": big7, "ai": ai}
 
 
+def _compute_date_range(news_items: list[dict]) -> str | None:
+    """Actual coverage of the selected news' `published_at` dates, as a
+    single date (e.g. "2026-07-25") or a "from ~ to" range. None if there
+    is no news."""
+    dates = sorted({item["published_at"][:10] for item in news_items if item.get("published_at")})
+    if not dates:
+        return None
+    if dates[0] == dates[-1]:
+        return dates[0]
+    return f"{dates[0]} ~ {dates[-1]}"
+
+
 def fetch_index_quotes() -> list[dict]:
     """Latest close and percent change for the major index ETF proxies.
     Symbols that fail to fetch are skipped."""
@@ -212,27 +224,40 @@ def generate_market_summary(days_back: int = 1) -> dict:
     news = select_news(days_back)
     indexes = fetch_index_quotes()
     index_block = _format_index_block(indexes) if indexes else ""
+    selected_news = news["big7"] + news["ai"]
+    date_range = _compute_date_range(selected_news)
 
     if not news["big7"] and not news["ai"]:
         summary = "本地儲存中沒有這個區間的 Big 7 或 AI 新聞，請先執行新聞抓取。"
         if index_block:
             summary = f"{index_block}\n\n{summary}"
-        return {"summary": summary, "news": news, "indexes": indexes}
+        return {"summary": summary, "news": news, "indexes": indexes, "date_range": date_range}
 
     index_lines = "\n".join(
         f"- {q['name']} ({q['symbol']}): 收盤 {q['close']}, 漲跌 {q['change_percent']:+.2f}%"
         for q in indexes
     ) or "（大盤數據暫時無法取得）"
+    # days_back<=1 keeps the original user_content verbatim (production's
+    # daily cron always calls this with days_back=1 via push_daily_summary
+    # and pushes the result unmodified to subscribers); days_back>1 adds an
+    # explicit coverage note so the model states the actual date range.
+    if days_back <= 1:
+        period_desc = "每日"
+        coverage_clause = ""
+    else:
+        period_desc = f"過去 {days_back} 天"
+        coverage_clause = f"（實際涵蓋日期：{date_range}），並在摘要中註明這份資料涵蓋的日期區間"
     user_content = (
         f"今天日期是 {date.today().isoformat()}。"
-        f"以下是大盤收盤數據與過去 {days_back} 天的新聞資料，請產出每日市場摘要：\n\n"
+        f"以下是大盤收盤數據與過去 {days_back} 天的新聞資料{coverage_clause}，"
+        f"請產出{period_desc}市場摘要：\n\n"
         f"[大盤收盤]\n{index_lines}\n\n"
         f"{_format_news_block(news)}"
     )
     response = _client().chat.completions.create(
         model=MODEL,
         messages=[
-            {"role": "system", "content": SUMMARY_SYSTEM_PROMPT},
+            {"role": "system", "content": summary_system_prompt(days_back)},
             {"role": "user", "content": user_content},
         ],
         temperature=0.5,
@@ -247,9 +272,15 @@ def generate_market_summary(days_back: int = 1) -> dict:
     summary = (response.choices[0].message.content or "").strip()
     if index_block:
         summary = f"{index_block}\n\n{summary}"
-    news_ids = [it["id"] for it in news["big7"] + news["ai"]]
+    news_ids = [it["id"] for it in selected_news]
     summary_id = get_backend().insert_market_summary(summary, news_ids)
-    return {"summary": summary, "summary_id": summary_id, "news": news, "indexes": indexes}
+    return {
+        "summary": summary,
+        "summary_id": summary_id,
+        "news": news,
+        "indexes": indexes,
+        "date_range": date_range,
+    }
 
 
 def push_daily_summary(refresh: bool = True) -> None:

@@ -268,6 +268,53 @@ def test_insert_news_returns_distinct_inserted_count_not_attempted_count(local_s
     assert total == distinct == 2
 
 
+def test_local_list_news_since_filters_and_orders_by_published_at(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.insert_news(
+        [
+            {
+                "category": "ai",
+                "symbol": None,
+                "headline": "Too old to include",
+                "summary": "old",
+                "url": None,
+                "published_at": "2026-07-01T00:00:00+00:00",
+            },
+            {
+                "category": "big7",
+                "symbol": "AAPL",
+                "headline": "Newer AAPL story",
+                "summary": "s2",
+                "url": "https://example.com/new",
+                "published_at": "2026-07-23T12:00:00+00:00",
+            },
+            {
+                "category": "big7",
+                "symbol": "AAPL",
+                "headline": "Older AAPL story",
+                "summary": "s1",
+                "url": "https://example.com/old",
+                "published_at": "2026-07-23T00:00:00+00:00",
+            },
+        ]
+    )
+
+    rows = backend.list_news_since("2026-07-23T00:00:00+00:00")
+
+    assert [row["headline"] for row in rows] == [
+        "Newer AAPL story",
+        "Older AAPL story",
+    ]  # too-old row excluded; newest first
+    row = rows[0]
+    assert row["category"] == "big7"
+    assert row["symbol"] == "AAPL"
+    assert row["summary"] == "s2"
+    assert row["url"] == "https://example.com/new"
+    assert row["published_at"] == "2026-07-23T12:00:00+00:00"
+
+
 def test_insert_news_reinserting_existing_headlines_returns_zero(local_store):
     from agent.db.backend import get_backend
 
