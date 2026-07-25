@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-25 — market-summary-logging — evaluator — ✅ Pass
+- 連結：docs/qa-reports/market-summary-logging.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 235/235 passed（沙箱環境 socket bind 限制與本次改動無關，停用沙箱後全綠）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。`market_summary.py` 統一改用 `aws_lambda_powertools.Logger`（與 `scheduler_handler.py` 一致），補上 `refresh_news`/`push_daily_summary`/`sync_earnings` 關鍵節點的 structured log，修好 Lambda 環境下 log 靜默的 observability 缺口；已用暫時破壞 log 訊息文字的方式驗證新測試 `test_push_daily_summary_logs_pushed_count` 會真的 fail。
+
 ## 2026-07-25 — market-summary-tool — evaluator — ✅ Pass
 - 連結：docs/qa-reports/market-summary-tool.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 222 passed/12 errors（既有 socket bind 沙盒限制，非回歸）、非沙盒重跑 234 passed, 0 failed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。第五個工具 `get_market_summary` 現場呼叫 `generate_market_summary(days_back)`、回傳僅含 `summary` 不含 news/indexes、`days_back` 1-7 越界由既有 `market_summary._date_from()` clamp 防呆、`tools/__init__.py` 掛載、`SYSTEM_INSTRUCTION` 補工具選擇句。延遲 import 解循環（tools → market_summary_tool → agent.market_summary → agent.agent → agent.tools）已用 `python -c "from agent.tools import TOOL_FUNCTIONS"` 實測驗證無誤。

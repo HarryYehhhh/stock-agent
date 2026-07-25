@@ -59,13 +59,18 @@ def sync_earnings() -> list[str]:
     today = date.today()
     date_to = (today + timedelta(days=SYNC_DAYS)).isoformat()
     failed = []
-    for item in get_backend().get_active_watchlist_symbols():
+    symbols = get_backend().get_active_watchlist_symbols()
+    for item in symbols:
         symbol = item["symbol"]
         try:
             get_earnings_calendar(today.isoformat(), date_to, symbol=symbol)
         except Exception:
             logger.exception("earnings sync failed for %s", symbol)
             failed.append(symbol)
+    logger.info(
+        "sync_earnings: synced %d/%d symbols (failed=%s)",
+        len(symbols) - len(failed), len(symbols), failed,
+    )
     return failed
 
 
