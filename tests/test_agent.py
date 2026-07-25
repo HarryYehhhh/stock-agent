@@ -79,6 +79,10 @@ def test_system_instruction_is_string():
     assert "get_earnings_calendar" in agent_module.SYSTEM_INSTRUCTION
 
 
+def test_system_instruction_mentions_knowledge_base():
+    assert "search_knowledge_base" in agent_module.SYSTEM_INSTRUCTION
+
+
 def test_build_tools_returns_function_definitions():
     tools = agent_module._build_tools()
     names = {t["function"]["name"] for t in tools}
@@ -89,6 +93,7 @@ def test_build_tools_returns_function_definitions():
         "get_stock_news",
         "get_quote",
         "get_market_summary",
+        "search_knowledge_base",
     }
 
 

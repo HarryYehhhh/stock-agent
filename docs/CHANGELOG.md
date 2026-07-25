@@ -15,6 +15,14 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-25 — knowledge-base — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/knowledge-base.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 251 passed/12 errors（既有 `test_local_integration.py` socket bind 沙盒限制，非回歸）、非沙盒重跑 263 passed, 0 failed；🔴 0、🟡 1（BM25 對「小語料+heading 常見疑問句式 bigram」誤中無關查詢的通用弱點，contract 指定的「今天天氣如何」測試字面通過但為 ADR 已接受 trade-off 的具體表現，建議補記 ADR Consequences，非阻塞）、🟢 3（`_truncate` 缺單元測試、`top_k` schema 缺 min/max、單一自訂 query 排序非 top-1）；循環次數 1；未解 P0/P1 0。Contract 14 項 deliverable 全數核對通過，種子檔指數↔ETF 對照（DJIA→DIA/SPY/QQQ/IWM）正確，無循環引入（`from agent.tools import TOOL_FUNCTIONS` + `import agent.agent` 實測 6 個工具），`SYSTEM_INSTRUCTION`/`tools/__init__.py` 均為 surgical append。
+
+## 2026-07-25 — knowledge-base — planner — spec + contract + ADR 完成
+- 連結：docs/specs/knowledge-base.md, docs/contracts/knowledge-base.md, docs/decisions/0008-knowledge-base-retrieval-strategy.md
+- 備註：新增本地 Markdown 知識庫 `knowledge/`（2-3 種子檔：指數代號對照 / 財報術語 / 分析框架）+ 第六個工具 `search_knowledge_base`，目標「回答可附來源、可驗證」。關鍵決策寫進 ADR-0008：斷詞用輕量規則（lowercase；英數 word；CJK 相鄰字元 bigram，len==1 退 unigram），計分自含 BM25（k1=1.5/b=0.75、heading tokens 2x 加權、分數<=0 濾掉使無命中回空），**不用 embeddings、不加第三方套件、索引不落地**（process 內 lazy build + @lru_cache）。工具 `search_knowledge_base(query, top_k=3)` 回傳 `{"results":[{source,heading,content}]}`、top_k clamp 5、單 section content 1500 字元安全截斷。知識庫模組只依賴 stdlib、不 import agent 層（避開 market_summary_tool 那類循環引入）。SYSTEM_INSTRUCTION surgical append：何時查庫、指數代號別用 get_quote 亂猜（DJIA→DIA/SPY/QQQ，對應實際發生過的 bug）、引用附來源、查無明說不編造。**部署（md 進 Lambda image）明確 out of scope**。驗收情境：中文問「道瓊怎麼查」top-1 命中指數對照 section、內文含 DIA、附來源 `檔名#標題`。無阻擋性 open question。備註：本環境 rg 不可用故未實際列讀參考專案 `knowledge_base_qa_bot/scaffold/markdown_kb/`，BM25 section 索引模式依需求描述自含定義，generator 實作時可再參考該專案但不依賴之。
+
 ## 2026-07-25 — market-summary-tool — evaluator — ✅ Pass
 - 連結：docs/qa-reports/market-summary-tool.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 222 passed/12 errors（既有 socket bind 沙盒限制，非回歸）、非沙盒重跑 234 passed, 0 failed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。第五個工具 `get_market_summary` 現場呼叫 `generate_market_summary(days_back)`、回傳僅含 `summary` 不含 news/indexes、`days_back` 1-7 越界由既有 `market_summary._date_from()` clamp 防呆、`tools/__init__.py` 掛載、`SYSTEM_INSTRUCTION` 補工具選擇句。延遲 import 解循環（tools → market_summary_tool → agent.market_summary → agent.agent → agent.tools）已用 `python -c "from agent.tools import TOOL_FUNCTIONS"` 實測驗證無誤。

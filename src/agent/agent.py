@@ -34,6 +34,11 @@ SYSTEM_INSTRUCTION = (
     "詢問市場摘要、大盤整體狀況時呼叫 get_market_summary，不要用 get_quote 猜指數代號。"
     "如果財報尚未公布（發布日期晚於今天），在回覆中提醒用戶預計發布日期與時段。"
     "不要僅因 earnings calendar 查無結果就回覆『找不到資料』——分析師預期通常早於財報日期公布。"
+    "\n\n遇到財報術語（EPS beat/miss、guidance、bmo/amc/dmh 等）、指數或代號對照"
+    "（道瓊、S&P 500、那斯達克怎麼查價）、或分析方法論問題時，先呼叫 search_knowledge_base 查詢知識庫。"
+    "指數代號不要憑空猜測後直接呼叫 get_quote（例如猜 DJIA），要先查知識庫取得對應 ETF 代號再查價。"
+    "引用知識庫內容時，在回覆中附上來源標註（格式：檔名#標題）。"
+    "知識庫查無相關內容時，明說不確定或知識庫沒有相關資料，不要編造答案。"
 )
 
 _TOKEN_RE = re.compile(r"token=[^&\s]+")

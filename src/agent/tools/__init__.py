@@ -1,5 +1,6 @@
 from agent.tools.earnings import EARNINGS_TOOL, get_earnings_calendar
 from agent.tools.estimates import ESTIMATES_TOOL, get_analyst_estimates
+from agent.tools.knowledge_base_tool import KNOWLEDGE_BASE_TOOL, search_knowledge_base
 from agent.tools.market_summary_tool import MARKET_SUMMARY_TOOL, get_market_summary
 from agent.tools.news import NEWS_TOOL, get_stock_news
 from agent.tools.quote import QUOTE_TOOL, get_quote
@@ -10,6 +11,7 @@ ALL_TOOL_SCHEMAS = [
     NEWS_TOOL,
     QUOTE_TOOL,
     MARKET_SUMMARY_TOOL,
+    KNOWLEDGE_BASE_TOOL,
 ]
 
 TOOL_FUNCTIONS = {
@@ -18,4 +20,5 @@ TOOL_FUNCTIONS = {
     "get_stock_news": get_stock_news,
     "get_quote": get_quote,
     "get_market_summary": get_market_summary,
+    "search_knowledge_base": search_knowledge_base,
 }

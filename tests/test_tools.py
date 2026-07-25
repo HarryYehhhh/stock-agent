@@ -10,7 +10,7 @@ import pytest
 import agent.market_summary as market_summary_module
 from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
 from agent.tools import _http as tools_http
-from agent.tools import earnings, estimates, market_summary_tool, news, quote
+from agent.tools import earnings, estimates, knowledge_base_tool, market_summary_tool, news, quote
 
 
 @pytest.fixture
@@ -39,6 +39,7 @@ def test_all_tool_schemas_have_required_fields():
         "get_stock_news",
         "get_quote",
         "get_market_summary",
+        "search_knowledge_base",
     }
     for tool in ALL_TOOL_SCHEMAS:
         assert "description" in tool
@@ -187,3 +188,64 @@ def test_get_market_summary_default_days_back_is_one(monkeypatch):
     monkeypatch.setattr(market_summary_module, "generate_market_summary", fake_generate)
     market_summary_tool.get_market_summary()
     assert calls == [1]
+
+
+# --- knowledge base ---
+
+
+def test_search_knowledge_base_returns_dict_with_results_and_source():
+    out = knowledge_base_tool.search_knowledge_base("道瓊怎麼查")
+    assert isinstance(out, dict)
+    assert "results" in out
+    assert out["results"], "expected at least one hit"
+    top = out["results"][0]
+    assert set(top.keys()) == {"source", "heading", "content"}
+    assert top["source"].startswith("indices#")
+    assert "DIA" in top["content"]
+
+
+def test_search_knowledge_base_no_hit_returns_empty_results():
+    out = knowledge_base_tool.search_knowledge_base("今天天氣如何")
+    assert out == {"results": []}
+
+
+def test_search_knowledge_base_default_top_k_is_three():
+    out = knowledge_base_tool.search_knowledge_base("beat")
+    assert len(out["results"]) <= 3
+
+
+def test_search_knowledge_base_top_k_clamped_to_five():
+    out = knowledge_base_tool.search_knowledge_base("beat", top_k=100)
+    assert len(out["results"]) <= 5
+
+
+def test_search_knowledge_base_top_k_one():
+    out = knowledge_base_tool.search_knowledge_base("道瓊怎麼查", top_k=1)
+    assert len(out["results"]) == 1
+
+
+def test_search_knowledge_base_registered_in_tool_functions():
+    assert "search_knowledge_base" in TOOL_FUNCTIONS
+    out = TOOL_FUNCTIONS["search_knowledge_base"](query="道瓊怎麼查")
+    assert isinstance(out, dict)
+    assert "results" in out
+
+
+def test_run_tool_passes_dict_result_through_unwrapped():
+    """agent._run_tool wraps non-dict results in {"result": ...}; dicts pass through as-is."""
+    from agent.agent import _run_tool
+
+    out = _run_tool("search_knowledge_base", {"query": "道瓊怎麼查"})
+    assert "result" not in out
+    assert "results" in out
+
+
+def test_no_circular_import_via_tools_package():
+    """agent.knowledge.retrieval is stdlib-only; importing the tools package
+    (which now includes knowledge_base_tool) must not trigger a circular
+    import with agent.agent."""
+    import agent.agent
+    from agent.tools import TOOL_FUNCTIONS as tool_functions
+
+    assert "search_knowledge_base" in tool_functions
+    assert callable(agent.agent.run_agent)
