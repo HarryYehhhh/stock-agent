@@ -20,6 +20,7 @@ from agent.db.backend import get_backend
 from agent.db.subscribers import get_all_active
 from agent.telegram_client import send_message
 from agent.tools._http import client
+from agent.tools.news import is_junk_headline
 from agent.tools.quote import get_quote
 
 log = logging.getLogger(__name__)
@@ -109,7 +110,7 @@ def refresh_news(days_back: int = 1) -> int:
             continue
         for it in fetched[:MAX_STORE_PER_SYMBOL]:
             headline = (it.get("headline") or "").strip()
-            if not headline:
+            if not headline or is_junk_headline(headline):
                 continue
             items.append({
                 "category": "big7",
@@ -129,7 +130,9 @@ def refresh_news(days_back: int = 1) -> int:
     for it in tech_items:
         headline = (it.get("headline") or "").strip()
         summary = it.get("summary") or ""
-        if not headline or not _AI_PATTERN.search(f"{headline} {summary}"):
+        if not headline or is_junk_headline(headline):
+            continue
+        if not _AI_PATTERN.search(f"{headline} {summary}"):
             continue
         items.append({
             "category": "ai",

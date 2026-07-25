@@ -125,6 +125,83 @@ def test_news_clamps_days_back(mock_http):
     assert params["from"] < params["to"]
 
 
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "Join us for our exclusive webinar on Q3 earnings",
+        "Tune in this Friday for our live market roundtable",
+        "Sign up now to get daily market alerts",
+        "Register now for our free investing masterclass",
+        "Most active S&P500 stocks in today's session — join us as we dive into today's biggest movers",
+        "Stocks to watch this week",
+        "Trending tickers on social media today",
+        "Top gainers and losers in today's trading session",
+    ],
+)
+def test_is_junk_headline_detects_marketing_and_listicle(headline):
+    assert news.is_junk_headline(headline) is True
+
+
+@pytest.mark.parametrize(
+    "headline",
+    [
+        "Apple reports record Q3 revenue of $89.5 billion",
+        "Tesla recalls 50,000 vehicles over battery defect",
+        "Microsoft to acquire cybersecurity startup for $2B",
+        "Fed raises interest rates by 25 basis points",
+        # Regression cases: substring/singular-vs-plural false positives
+        # flagged in review — these are real per-stock news, not marketing
+        # listicles, and must not be filtered.
+        "Netflix subscriber growth beats estimates in Q2",
+        "Disney+ subscribers hit record high",
+        "Tesla was the top gainer in the S&P 500 today after earnings beat",
+        "Apple is a stock to watch after strong iPhone sales data",
+        "AMC among most actively traded stocks as retail interest surges",
+    ],
+)
+def test_is_junk_headline_allows_real_news(headline):
+    assert news.is_junk_headline(headline) is False
+
+
+def test_is_junk_headline_case_insensitive():
+    assert news.is_junk_headline("JOIN US for a live session") is True
+    assert news.is_junk_headline("SuBscRiBe to our newsletter today") is True
+
+
+def test_is_junk_headline_handles_empty_and_none():
+    assert news.is_junk_headline(None) is False
+    assert news.is_junk_headline("") is False
+
+
+def test_news_filters_out_junk_headlines(mock_http):
+    mock_http.get.return_value = _resp([
+        {"headline": "Apple reports record Q3 revenue", "summary": "...", "url": "u", "datetime": 0, "source": "s"},
+        {"headline": "Stocks to watch this week", "summary": "...", "url": "u", "datetime": 0, "source": "s"},
+        {"headline": "Join us for our free webinar", "summary": "...", "url": "u", "datetime": 0, "source": "s"},
+        {"headline": "Tesla recalls vehicles over defect", "summary": "...", "url": "u", "datetime": 0, "source": "s"},
+    ])
+    out = news.get_stock_news("AAPL", days_back=3)
+    headlines = [it["headline"] for it in out]
+    assert headlines == ["Apple reports record Q3 revenue", "Tesla recalls vehicles over defect"]
+
+
+def test_news_all_junk_returns_empty(mock_http):
+    mock_http.get.return_value = _resp([
+        {"headline": "Join us for our webinar", "summary": "...", "url": "u", "datetime": 0, "source": "s"},
+        {"headline": "Stocks to watch this week", "summary": "...", "url": "u", "datetime": 0, "source": "s"},
+    ])
+    out = news.get_stock_news("AAPL", days_back=3)
+    assert out == []
+
+
+def test_news_all_real_returns_unfiltered(mock_http):
+    mock_http.get.return_value = _resp(
+        [{"headline": f"Company reports event {i}", "summary": "...", "url": "u", "datetime": 0, "source": "s"} for i in range(5)]
+    )
+    out = news.get_stock_news("AAPL", days_back=3)
+    assert len(out) == 5
+
+
 # --- quote ---
 
 def test_get_quote_returns_normalized_fields(mock_http):

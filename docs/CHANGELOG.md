@@ -15,6 +15,14 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-25 — news-quality — evaluator — ✅ Pass
+- 連結：docs/qa-reports/news-quality.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 244 passed/12 errors（既有 socket bind 沙盒限制，非回歸）、非沙盒重跑 256 passed, 0 failed；🔴 0、🟡 0；循環次數 2；未解 P0/P1 0。round 1 的 2🔴（`subscribe` 缺 word boundary 命中 subscriber、獨立 `top gainer/loser` 單數命中真實個股事件標題）與 2🟡（`stock to watch` 單數、`most active...stocks` 跨標點容錯）已由 generator 回修：`subscribe`/其餘關鍵字全補 `\b`、獨立 top gainer/loser 規則移除只留成對 `gainers and/& losers`、`most active...stocks` 規則整條移除、`stocks to watch` 強制複數。5 個反例逐一實測確認不再誤殺，且垃圾偵測能力（含 "most active...— join us" 混合案例）未退化；5 個反例已併入正式回歸測試。
+
+## 2026-07-25 — news-quality — evaluator — ❌ Fail
+- 連結：docs/qa-reports/news-quality.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 240 passed/12 errors（既有 socket bind 沙盒限制，非回歸）、非沙盒重跑 252 passed, 0 failed；🔴 2、🟡 2；循環次數 1；未解 P0 2、P1 2。`JUNK_HEADLINE_PATTERN` 的 `subscribe`（無 word boundary，命中 subscriber/subscribers）與獨立的 `top\s+(?:gainers?|losers?)`（單數形式命中真實個股事件標題如 "Tesla was the top gainer...after earnings beat"）皆會過殺真新聞，違反「寧可漏殺不過殺」要求，需回修；`stocks? to watch` 與 `most active...stocks` 風險較低列 Warning。SYSTEM_INSTRUCTION 補句、市場摘要 refresh_news 套用過濾、import 方向皆無問題。
+
 ## 2026-07-25 — market-summary-tool — evaluator — ✅ Pass
 - 連結：docs/qa-reports/market-summary-tool.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 222 passed/12 errors（既有 socket bind 沙盒限制，非回歸）、非沙盒重跑 234 passed, 0 failed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0。第五個工具 `get_market_summary` 現場呼叫 `generate_market_summary(days_back)`、回傳僅含 `summary` 不含 news/indexes、`days_back` 1-7 越界由既有 `market_summary._date_from()` clamp 防呆、`tools/__init__.py` 掛載、`SYSTEM_INSTRUCTION` 補工具選擇句。延遲 import 解循環（tools → market_summary_tool → agent.market_summary → agent.agent → agent.tools）已用 `python -c "from agent.tools import TOOL_FUNCTIONS"` 實測驗證無誤。
