@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-27 — earnings-cache-fix — evaluator — ✅ Pass
+- 連結：docs/qa-reports/earnings-cache-fix.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 329 passed/13 errors（既有 `finnhub_stub` fixture socket bind 沙箱限制，非回歸）、停用沙箱重跑 342/342 passed；`sam validate --lint` 通過。修 production incident 兩處根因——(1) `infra/template.yaml` ProcessorFunction 補 `DynamoDBCrudPolicy: TableName: !Ref EarningsCalendarTable`（比照 SchedulerFunction）；(2) `get_earnings_calendar()` 的 `upsert_earnings_calendar` 包 try/except，快取寫入失敗只 log warning 照常回傳 Finnhub 資料，不再讓整個 tool 失敗。新增 1 條重現測試並交叉驗證 `get_backend()` 的 `lru_cache` singleton 語意確認測試非偽陽性。🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。Diff 僅 3 個檔案（40 行新增/1 行刪除），全數可追溯到需求，可合併。
+
 ## 2026-07-26 — earnings-week-forward — evaluator — ✅ Pass
 - 連結：docs/qa-reports/earnings-week-forward.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 329 passed/12 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 341/341 passed（與 generator 自報一致）；🔴 0、🟡 1（「本週」在財報行事曆規則（未來視角）與市場摘要規則（過去 7 天）中語意相反，雖有工具情境句區隔，對 llama-3.3-70b 仍有理論上混淆風險，屬 prompt 純文字驗收的固有限制，不阻塞）；循環次數 1；未解 P0/P1 0/0。Diff 僅動 `src/agent/prompts.py` 兩處工具選擇策略段落 + `tests/test_prompts.py` 2 個新測試，符合限定範圍；未修改既有 `days_back`/市場摘要 baseline 規則。可合併。
