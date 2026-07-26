@@ -70,3 +70,20 @@ def test_system_instruction_mentions_days_back_cap_and_long_period_mapping():
     assert "days_back 上限為 7" in prompts.SYSTEM_INSTRUCTION
     assert "本月" in prompts.SYSTEM_INSTRUCTION
     assert "僅涵蓋最近 7 天" in prompts.SYSTEM_INSTRUCTION
+
+
+def test_system_instruction_maps_this_week_to_future_date_range():
+    """本週/近期/接下來/最近等時間詞詢問財報行事曆時，date_from/date_to 採未來視角。"""
+    assert "本週" in prompts.SYSTEM_INSTRUCTION
+    assert "近期" in prompts.SYSTEM_INSTRUCTION
+    assert "接下來" in prompts.SYSTEM_INSTRUCTION
+    assert "最近" in prompts.SYSTEM_INSTRUCTION
+    assert "date_from 傳今天日期，date_to 傳今天加 7 天" in prompts.SYSTEM_INSTRUCTION
+    assert "過去或已公布的財報" in prompts.SYSTEM_INSTRUCTION
+
+
+def test_system_instruction_requires_earnings_hour_label_in_reply():
+    """回覆財報行事曆結果時，每筆財報都要標示日期與盤前/盤後/盤中，缺值標「時段未定」。"""
+    assert "盤前/盤後/盤中" in prompts.SYSTEM_INSTRUCTION
+    assert "bmo/amc/dmh" in prompts.SYSTEM_INSTRUCTION
+    assert "時段未定" in prompts.SYSTEM_INSTRUCTION

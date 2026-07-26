@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-26 — earnings-week-forward — evaluator — ✅ Pass
+- 連結：docs/qa-reports/earnings-week-forward.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 329 passed/12 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 341/341 passed（與 generator 自報一致）；🔴 0、🟡 1（「本週」在財報行事曆規則（未來視角）與市場摘要規則（過去 7 天）中語意相反，雖有工具情境句區隔，對 llama-3.3-70b 仍有理論上混淆風險，屬 prompt 純文字驗收的固有限制，不阻塞）；循環次數 1；未解 P0/P1 0/0。Diff 僅動 `src/agent/prompts.py` 兩處工具選擇策略段落 + `tests/test_prompts.py` 2 個新測試，符合限定範圍；未修改既有 `days_back`/市場摘要 baseline 規則。可合併。
+
 ## 2026-07-26 — deploy-pipeline-hardening（round 2，最終） — evaluator — ✅ Pass
 - 連結：docs/qa-reports/deploy-pipeline-hardening.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 停用沙箱重跑 332/332 passed（與 round 1、generator 自報一致）；`sam validate --lint` valid；🔴 0、🟡 0；循環次數 2；未解 P0/P1 0/0。round 1 的兩個 🔴 已修正並複驗（親自用 stub aws/sam binary 重跑，非僅信自報）：🔴1 `smoke-test-processor` 改用 `if ! INVOKE_META=$$(... 2>&1); then exit 1; fi` 包住 `aws lambda invoke`，親測成功/FunctionError/CLI 呼叫本身失敗三分支皆正確 fail-closed（CLI 失敗分支不再誤判為通過），暫存 response file 三分支皆確認清理，且完整 `make deploy` 鏈路（stub sam+aws）exit code 正確傳播；🔴2 `.github/workflows/deploy.yml` 在 `SAM deploy` step 後新增 `Post-deploy smoke test` step 跑 `make smoke-test-processor STACK=earnings-agent REGION=ap-northeast-1`，確認位置/credentials 沿用/region 一致/working directory/YAML 語法皆正確。新增 1 條 🟢（`2>&1` 混合 stdout/stderr 在極低機率「invoke 成功但 stderr 有雜訊」情境下仍可能誤判，不阻塞）；round 1 的 🟡（`$(STACK)`/`AppName` 命名耦合）本輪未處理，維持邊界情境不影響合併。可合併。
