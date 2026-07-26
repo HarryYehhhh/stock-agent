@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from aws_lambda_powertools import Logger
 
@@ -79,6 +80,40 @@ def _published_at(item: dict) -> str:
 def _date_from(days_back: int) -> str:
     days_back = max(1, min(7, days_back))
     return (date.today() - timedelta(days=days_back)).isoformat()
+
+
+def _fetch_market_holidays() -> list[dict]:
+    r = client().get(
+        "/stock/market-holiday",
+        params={"exchange": "US", "token": finnhub_api_key()},
+    )
+    r.raise_for_status()
+    return r.json().get("data", [])
+
+
+def _ny_today() -> date:
+    """Current New York calendar date. Notify time is 10:00 Asia/Taipei,
+    i.e. 22:00 the prior US Eastern day — right after that session's close —
+    so this identifies the session `_is_trading_day()` should check."""
+    return datetime.now(ZoneInfo("America/New_York")).date()
+
+
+def _is_trading_day(ny_date: date) -> bool:
+    """Whether the US market session on `ny_date` (see `_ny_today()`) was a
+    trading day. Weekends are always closed; a full-day Finnhub holiday
+    (empty `tradingHour`) is closed too, but a half-day holiday (non-empty
+    `tradingHour`) still trades. Finnhub failures fail open (treated as a
+    trading day) so a flaky holiday check never silently drops the daily
+    push."""
+    if ny_date.weekday() >= 5:
+        return False
+    try:
+        holidays = _fetch_market_holidays()
+    except Exception as e:
+        log.warning("market holiday check failed, treating as trading day: %s", e)
+        return True
+    iso = ny_date.isoformat()
+    return not any(h.get("atDate") == iso and not h.get("tradingHour") for h in holidays)
 
 
 def refresh_news(days_back: int = 1) -> int:
@@ -300,7 +335,14 @@ def push_daily_summary(refresh: bool = True) -> None:
     `refresh=False` skips `refresh_news` (used by the cloud notify-mode
     stage, which runs after a separate sync-mode stage already refreshed the
     news); the default `refresh=True` keeps local `make daily-summary`
-    behavior unchanged."""
+    behavior unchanged.
+
+    Skips entirely (no refresh, no generation, no push) on days the US
+    market didn't trade — see `_is_trading_day()`."""
+    ny_date = _ny_today()
+    if not _is_trading_day(ny_date):
+        log.info("not a US trading day, skip market summary (ny_date=%s)", ny_date.isoformat())
+        return
     if refresh:
         refresh_news(days_back=1)
     result = generate_market_summary(days_back=1)

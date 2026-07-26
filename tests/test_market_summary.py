@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from datetime import date, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -60,6 +61,92 @@ QUOTES = {
 @pytest.fixture
 def mock_quotes(monkeypatch):
     monkeypatch.setattr(ms, "get_quote", lambda symbol: dict(QUOTES[symbol]))
+
+
+# ---------------------------------------------------------------------------
+# _ny_today() / _is_trading_day(): US trading-day gate for the daily summary
+# ---------------------------------------------------------------------------
+
+
+def _freeze_ny_now(monkeypatch, wall_clock: datetime) -> None:
+    """Pin `datetime.now(tz)` inside market_summary to a fixed wall-clock
+    time, regardless of the tz passed in (avoids depending on real
+    zoneinfo conversion math for the test's chosen instant)."""
+
+    class _Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return wall_clock.replace(tzinfo=tz) if tz else wall_clock
+
+    monkeypatch.setattr(ms, "datetime", _Frozen)
+
+
+def test_ny_today_returns_the_frozen_wall_clock_date(monkeypatch):
+    _freeze_ny_now(monkeypatch, datetime(2026, 7, 27, 22, 0))
+
+    assert ms._ny_today() == date(2026, 7, 27)
+
+
+def test_is_trading_day_weekend_is_not_trading(monkeypatch):
+    fetch = MagicMock()
+    monkeypatch.setattr(ms, "_fetch_market_holidays", fetch)
+
+    assert ms._is_trading_day(date(2026, 7, 25)) is False  # Saturday
+    fetch.assert_not_called()
+
+
+def test_is_trading_day_full_day_holiday_is_not_trading(monkeypatch):
+    monkeypatch.setattr(
+        ms, "_fetch_market_holidays",
+        lambda: [{"eventName": "Christmas", "atDate": "2026-12-24", "tradingHour": "", "postMarket": ""}],
+    )
+
+    assert ms._is_trading_day(date(2026, 12, 24)) is False  # Thursday
+
+
+def test_is_trading_day_half_day_holiday_is_still_trading(monkeypatch):
+    monkeypatch.setattr(
+        ms, "_fetch_market_holidays",
+        lambda: [{"eventName": "Christmas Eve", "atDate": "2026-12-24", "tradingHour": "09:30-13:00", "postMarket": ""}],
+    )
+
+    assert ms._is_trading_day(date(2026, 12, 24)) is True  # Thursday
+
+
+def test_is_trading_day_weekday_no_holiday_is_trading(monkeypatch):
+    monkeypatch.setattr(ms, "_fetch_market_holidays", lambda: [])
+
+    assert ms._is_trading_day(date(2026, 7, 27)) is True  # Monday
+
+
+def test_is_trading_day_fails_open_when_holiday_check_errors(monkeypatch, caplog):
+    def boom():
+        raise RuntimeError("finnhub down")
+
+    monkeypatch.setattr(ms, "_fetch_market_holidays", boom)
+
+    with caplog.at_level(logging.WARNING):
+        assert ms._is_trading_day(date(2026, 7, 27)) is True  # Monday
+    assert any("market holiday check failed" in r.message for r in caplog.records)
+
+
+def test_fetch_market_holidays_calls_finnhub_with_exchange_and_token(monkeypatch):
+    resp = MagicMock()
+    resp.json.return_value = {
+        "data": [{"eventName": "Christmas", "atDate": "2026-12-25", "tradingHour": "", "postMarket": ""}],
+    }
+    resp.raise_for_status = MagicMock()
+    mock_client = MagicMock()
+    mock_client.get.return_value = resp
+    monkeypatch.setattr(ms, "client", lambda: mock_client)
+    monkeypatch.setattr(ms, "finnhub_api_key", lambda: "test-key")
+
+    holidays = ms._fetch_market_holidays()
+
+    assert holidays == [{"eventName": "Christmas", "atDate": "2026-12-25", "tradingHour": "", "postMarket": ""}]
+    args, kwargs = mock_client.get.call_args
+    assert args[0] == "/stock/market-holiday"
+    assert kwargs["params"] == {"exchange": "US", "token": "test-key"}
 
 
 def test_ai_pattern_word_boundary():
@@ -272,6 +359,7 @@ def push_mocks(local_store, mock_finnhub, mock_groq, mock_quotes, monkeypatch):
     mock_groq.chat.completions.create.return_value = _text_response("*📊 Big 7 動態* 摘要內容")
     fake_send = MagicMock()
     monkeypatch.setattr(ms, "send_message", fake_send)
+    monkeypatch.setattr(ms, "_is_trading_day", lambda ny_date: True)
     subscribe("111")
     subscribe("222")
     return {"send": fake_send}
@@ -307,6 +395,7 @@ def test_push_daily_summary_skips_send_when_no_news(local_store, mock_groq, mock
 
     fake_send = MagicMock()
     monkeypatch.setattr(ms, "send_message", fake_send)
+    monkeypatch.setattr(ms, "_is_trading_day", lambda ny_date: True)
     subscribe("111")
 
     ms.push_daily_summary()
@@ -319,6 +408,7 @@ def test_push_daily_summary_skips_send_when_no_subscribers(local_store, mock_fin
     mock_groq.chat.completions.create.return_value = _text_response("*📊 Big 7 動態* 摘要內容")
     fake_send = MagicMock()
     monkeypatch.setattr(ms, "send_message", fake_send)
+    monkeypatch.setattr(ms, "_is_trading_day", lambda ny_date: True)
 
     ms.push_daily_summary()
 
@@ -383,6 +473,7 @@ def test_push_daily_summary_end_to_end_on_dynamodb_backend(
     )
     fake_send = MagicMock()
     monkeypatch.setattr(ms, "send_message", fake_send)
+    monkeypatch.setattr(ms, "_is_trading_day", lambda ny_date: True)
     subscribe("111")
 
     ms.push_daily_summary()
@@ -405,6 +496,7 @@ def test_push_daily_summary_is_idempotent_on_dynamodb_backend(
     )
     fake_send = MagicMock()
     monkeypatch.setattr(ms, "send_message", fake_send)
+    monkeypatch.setattr(ms, "_is_trading_day", lambda ny_date: True)
     subscribe("111")
 
     ms.push_daily_summary()
@@ -413,3 +505,41 @@ def test_push_daily_summary_is_idempotent_on_dynamodb_backend(
     # Same day rerun: already notified, no duplicate push.
     ms.push_daily_summary()
     assert fake_send.call_count == 1
+
+
+def test_push_daily_summary_skips_entirely_on_non_trading_day(
+    local_store, mock_finnhub, mock_groq, mock_quotes, monkeypatch
+):
+    from agent.db.subscribers import subscribe
+
+    subscribe("111")
+    fake_send = MagicMock()
+    fake_refresh = MagicMock()
+    monkeypatch.setattr(ms, "send_message", fake_send)
+    monkeypatch.setattr(ms, "refresh_news", fake_refresh)
+    monkeypatch.setattr(ms, "_is_trading_day", lambda ny_date: False)
+
+    ms.push_daily_summary()
+
+    fake_refresh.assert_not_called()
+    fake_send.assert_not_called()
+    mock_groq.chat.completions.create.assert_not_called()
+
+
+def test_push_daily_summary_logs_skip_with_ny_date_not_system_today(local_store, monkeypatch, caplog):
+    """Regression: the skip log must report the NY date `_is_trading_day()`
+    actually evaluated, not `date.today()` (system/UTC date) — Lambda runs
+    in UTC and Taipei 10:00 notify time systematically differs from the NY
+    session date, which would otherwise mislead CloudWatch-log-based
+    healthchecks."""
+    monkeypatch.setattr(ms, "_is_trading_day", lambda ny_date: False)
+    monkeypatch.setattr(ms, "_ny_today", lambda: date(2099, 3, 1))
+
+    with caplog.at_level(logging.INFO):
+        ms.push_daily_summary()
+
+    assert any(
+        "not a US trading day" in r.message and "ny_date=2099-03-01" in r.message
+        for r in caplog.records
+    )
+    assert not any(date.today().isoformat() in r.message for r in caplog.records)

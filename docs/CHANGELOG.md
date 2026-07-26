@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-26 — trading-day-summary-gate — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/trading-day-summary-gate.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 318 passed/12 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 330/330 passed（與 generator 自報一致）；🔴 0、🟡 1（`push_daily_summary()` 非交易日 skip log 用 `date.today()`（系統/UTC）而非 `_is_trading_day()` 實際判斷的 America/New_York 日期，Lambda 環境下兩者在 10:00 Taipei notify 執行時系統性差一天，會誤導依賴 log 日期欄位的每日健檢流程，不影響推播正確性本身）；循環次數 1；未解 P0/P1 0/0。需求 1-5（NY 日期判斷、週末不打 API、假日清單+tradingHour 空字串、半日仍推、API 失敗 fail-open、scheduler_handler.py/refresh_news 完全未動）皆已逐條驗證通過，8 條新測試涵蓋週末/全日休市/半日/平日/fail-open/API 參數/skip 整合，全 mock 無真實 API；既有 `push_daily_summary` 測試補的 `_is_trading_day → True` monkeypatch 經實測確認為必要修補（今日為週日，若無此 monkeypatch 既有測試會被新 gate 擋下失敗）。可合併，🟡 可視情況先合併後補或本輪回修。
+
 ## 2026-07-26 — rate-limit-and-replay（round 2，最終） — evaluator — ✅ Pass
 - 連結：docs/qa-reports/rate-limit-and-replay.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 310 passed/12 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 322/322 passed（與 generator 自報一致）；🔴 0、🟡 0；循環次數 2；未解 P0/P1 0/0。round 1 的 🔴（`increment_rate_limit` UpdateExpression 子句順序 `ADD...SET` 違反 DynamoDB 官方 `SET,REMOVE,ADD,DELETE` 固定順序）已修正為 `SET...ADD`；round 1 的 🟡（webhook 內同步呼叫 Telegram 有超過 10s Lambda timeout 風險）已修正為新增 `send_plain_message(timeout=3.0)` 且無 Markdown 重試；另外 `check_rate_limit()` 呼叫本身也補了 fail-open try/except，新增 `test_rate_limit_check_failure_fails_open_and_still_enqueues` 實際檢查 SQS 收到訊息（非只信任回傳值）驗證行為。可合併。
