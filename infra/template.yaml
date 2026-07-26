@@ -278,6 +278,8 @@ Resources:
             TableName: !Ref SubscribersTable
         - DynamoDBCrudPolicy:
             TableName: !Ref WatchlistTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref EarningsCalendarTable
         - SQSPollerPolicy:
             QueueName: !GetAtt UpdatesQueue.QueueName
         - Statement:

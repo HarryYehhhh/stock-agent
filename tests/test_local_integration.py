@@ -376,6 +376,36 @@ def test_earnings_calendar_fetch_writes_sqlite_with_local_finnhub_stub(
     assert rows == [("AAPL", "2026-07-23", "amc", 1.42, 82000000000)]
 
 
+def test_earnings_calendar_returns_data_even_when_cache_write_fails(
+    local_store, finnhub_stub, monkeypatch
+):
+    base_url, handler = finnhub_stub
+    handler.payload = {
+        "earningsCalendar": [
+            {
+                "symbol": "AAPL",
+                "date": "2026-07-23",
+                "hour": "amc",
+                "epsEstimate": 1.42,
+                "revenueEstimate": 82000000000,
+            },
+        ]
+    }
+    client = _use_finnhub_stub(monkeypatch, base_url)
+    monkeypatch.setattr(
+        get_backend(),
+        "upsert_earnings_calendar",
+        MagicMock(side_effect=Exception("AccessDeniedException")),
+    )
+
+    try:
+        out = earnings.get_earnings_calendar("2026-07-20", "2026-07-24", symbol="AAPL")
+    finally:
+        client.close()
+
+    assert out == handler.payload["earningsCalendar"]
+
+
 @pytest.mark.parametrize("status", [401, 429, 500])
 def test_earnings_calendar_http_errors_do_not_write_sqlite(
     local_store, finnhub_stub, monkeypatch, status

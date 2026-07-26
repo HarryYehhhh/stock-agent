@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
+
 from agent.config import finnhub_api_key
 from agent.db.backend import get_backend
 from agent.tools._http import client
+
+log = logging.getLogger(__name__)
 
 EARNINGS_TOOL = {
     "name": "get_earnings_calendar",
@@ -39,7 +43,10 @@ def get_earnings_calendar(
     if symbol:
         items = [it for it in items if (it.get("symbol") or "").upper() == symbol.upper()]
     items = items[:100]
-    get_backend().upsert_earnings_calendar(items)
+    try:
+        get_backend().upsert_earnings_calendar(items)
+    except Exception as e:
+        log.warning("earnings calendar cache write failed: %s", e)
     return items
 
 
