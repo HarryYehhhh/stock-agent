@@ -506,13 +506,99 @@ def test_dynamodb_backend_mark_rate_limit_notified_is_conditional(aws):
     assert backend.mark_rate_limit_notified("111", "minute#2") is True
 
 
-def test_dynamodb_insert_market_summary_is_a_noop(aws):
+def test_dynamodb_insert_market_summary_persists_cache_entry_with_ttl(aws):
+    """ADR-0006 §3 revision (2026-07-26): DynamoDB now persists market
+    summaries as a Groq-call cache keyed by (summary_date, days_back,
+    news_ids_hash), stored in NewsTable under bucket="market_summary"."""
+    import time
+
+    from agent.db.backend import MARKET_SUMMARY_TTL_SECONDS, get_backend
+
+    backend = get_backend()
+    before = int(time.time())
+
+    backend.insert_market_summary(
+        "some summary", ["headline-a", "headline-b"], "2026-07-26", 1, "abc123"
+    )
+
+    table = aws["ddb"].Table(NEWS)
+    items = table.scan()["Items"]
+    assert len(items) == 1
+    item = items[0]
+    assert item["bucket"] == "market_summary"
+    assert item["headline"] == "SUMMARY#2026-07-26#1#abc123"
+    assert item["summary"] == "some summary"
+    assert item["summary_date"] == "2026-07-26"
+    assert item["days_back"] == 1
+    assert item["news_ids_hash"] == "abc123"
+    assert before + MARKET_SUMMARY_TTL_SECONDS <= item["ttl"] <= before + MARKET_SUMMARY_TTL_SECONDS + 30
+
+
+def test_dynamodb_get_cached_market_summary_hits_and_misses(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.insert_market_summary("some summary", ["headline-a"], "2026-07-26", 1, "abc123")
+
+    hit = backend.get_cached_market_summary("2026-07-26", 1, "abc123")
+    assert hit == {"id": "SUMMARY#2026-07-26#1#abc123", "summary": "some summary"}
+
+    assert backend.get_cached_market_summary("2026-07-26", 1, "different-hash") is None
+    assert backend.get_cached_market_summary("2026-07-26", 7, "abc123") is None
+    assert backend.get_cached_market_summary("2026-07-27", 1, "abc123") is None
+
+
+def test_local_insert_and_get_cached_market_summary(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.insert_market_summary("some summary", [1, 2], "2026-07-26", 1, "abc123")
+
+    hit = backend.get_cached_market_summary("2026-07-26", 1, "abc123")
+    assert hit["summary"] == "some summary"
+
+    assert backend.get_cached_market_summary("2026-07-26", 1, "other-hash") is None
+    assert backend.get_cached_market_summary("2026-07-26", 7, "abc123") is None
+
+
+def test_market_summaries_schema_migration_of_pre_existing_store(monkeypatch, tmp_path):
+    """Pre-existing DBs created before the cache columns existed migrate
+    cleanly, and their old rows (NULL cache columns) never match a cache
+    lookup — they expire on their own."""
+    store_path = tmp_path / "old_summaries.sqlite3"
+    with sqlite3.connect(store_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE market_summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                created_at TEXT NOT NULL,
+                summary TEXT NOT NULL,
+                news_ids TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO market_summaries (created_at, summary, news_ids) VALUES (?, ?, ?)",
+            ("2026-07-01T00:00:00+00:00", "old audit-only summary", "[1, 2, 3]"),
+        )
+
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("LOCAL_STORE_PATH", str(store_path))
+    clear_db_caches()
     from agent.db.backend import get_backend
 
     backend = get_backend()
 
-    result = backend.insert_market_summary("some summary", ["headline-a", "headline-b"])
+    with sqlite3.connect(store_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(market_summaries)")}
+    assert {"summary_date", "days_back", "news_ids_hash"} <= columns
 
-    assert result is None
-    table = aws["ddb"].Table(NEWS)
-    assert table.scan()["Items"] == []  # nothing persisted anywhere
+    # The pre-existing row predates the cache columns (NULL) so it never matches.
+    assert backend.get_cached_market_summary("2026-07-01", 1, "irrelevant") is None
+
+    # New-format inserts/reads work fine post-migration.
+    backend.insert_market_summary("new summary", [4, 5], "2026-07-26", 1, "def456")
+    cached = backend.get_cached_market_summary("2026-07-26", 1, "def456")
+    assert cached["summary"] == "new summary"
+
+    clear_db_caches()

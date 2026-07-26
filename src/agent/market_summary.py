@@ -5,11 +5,16 @@ store (`news` table), then read the stored news back and ask the model to
 synthesize a Traditional Chinese daily briefing (thematic summary, not
 translation). Each generated summary is persisted in `market_summaries`
 together with the source news ids so model output can be audited against
-its inputs.
+its inputs, and also serves as a cache keyed by (summary_date, days_back,
+news_ids_hash): a repeat call with the same day's date, days_back and
+selected news set returns the stored summary instead of calling Groq again
+(ADR-0006 §3 revision, 2026-07-26).
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -250,24 +255,54 @@ def _format_news_block(news: dict) -> str:
     return "\n".join(lines)
 
 
+def _news_ids_hash(news_ids: list) -> str:
+    """Stable hash of a news id set, tolerant of both sqlite's int ids and
+    DynamoDB's headline-string ids."""
+    ids_str = sorted(str(news_id) for news_id in news_ids)
+    return hashlib.sha256(json.dumps(ids_str).encode()).hexdigest()[:16]
+
+
 def generate_market_summary(days_back: int = 1) -> dict:
     """Read stored news and return the Groq-synthesized daily summary.
 
     Call refresh_news() first to pull the latest news into the store. The
-    generated summary is persisted with its source news ids for auditing.
+    generated summary is persisted with its source news ids for auditing and
+    cached by (summary_date, days_back, news_ids_hash): a repeat call with
+    the same day's date, days_back and selected news set returns the cached
+    summary without calling Groq again (ADR-0006 §3 revision).
     """
     news = select_news(days_back)
-    indexes = fetch_index_quotes()
-    index_block = _format_index_block(indexes) if indexes else ""
     selected_news = news["big7"] + news["ai"]
     date_range = _compute_date_range(selected_news)
 
     if not news["big7"] and not news["ai"]:
+        indexes = fetch_index_quotes()
+        index_block = _format_index_block(indexes) if indexes else ""
         summary = "本地儲存中沒有這個區間的 Big 7 或 AI 新聞，請先執行新聞抓取。"
         if index_block:
             summary = f"{index_block}\n\n{summary}"
         return {"summary": summary, "news": news, "indexes": indexes, "date_range": date_range}
 
+    summary_date = date.today().isoformat()
+    news_ids = [it["id"] for it in selected_news]
+    news_ids_hash = _news_ids_hash(news_ids)
+    backend = get_backend()
+    cached = backend.get_cached_market_summary(summary_date, days_back, news_ids_hash)
+    if cached is not None:
+        log.info(
+            "market summary cache hit (date=%s days_back=%d hash=%s), skipping Groq call",
+            summary_date, days_back, news_ids_hash,
+        )
+        return {
+            "summary": cached["summary"],
+            "summary_id": cached.get("id"),
+            "news": news,
+            "indexes": [],
+            "date_range": date_range,
+        }
+
+    indexes = fetch_index_quotes()
+    index_block = _format_index_block(indexes) if indexes else ""
     index_lines = "\n".join(
         f"- {q['name']} ({q['symbol']}): 收盤 {q['close']}, 漲跌 {q['change_percent']:+.2f}%"
         for q in indexes
@@ -313,8 +348,9 @@ def generate_market_summary(days_back: int = 1) -> dict:
     summary = (response.choices[0].message.content or "").strip()
     if index_block:
         summary = f"{index_block}\n\n{summary}"
-    news_ids = [it["id"] for it in selected_news]
-    summary_id = get_backend().insert_market_summary(summary, news_ids)
+    summary_id = backend.insert_market_summary(
+        summary, news_ids, summary_date, days_back, news_ids_hash
+    )
     return {
         "summary": summary,
         "summary_id": summary_id,

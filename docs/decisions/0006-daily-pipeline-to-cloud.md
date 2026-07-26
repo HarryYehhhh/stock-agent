@@ -33,6 +33,8 @@ ADR-0004 §8 保留的 `scheduler_handler._notify_live()`（打全域 `DEFAULT_W
 - **news**：`DynamoDBBackend` 補 `insert_news`（headline 為 PK，put_item 去重）＋ `list_news_since`（查既有 `published-at-index` GSI，`bucket="news"` AND `published_at >= from`）。`NewsTable` 已存在 template、news 已由 #22 上行；補齊讀寫讓 `push_daily_summary` 在雲端與本地走同一條 `refresh_news → insert_news → list_news_since → select_news` 路徑。為維持 `generate_market_summary` 不改，`list_news_since`（DynamoDB）回傳列帶 `id`（值＝headline）。
 - **market_summaries**：**雲端不持久化**。它是純稽核記錄，production 無任何路徑讀回（僅測試讀），且 `news_ids` 稽核鏈綁 sqlite autoincrement id、無法對映 DynamoDB（headline PK）。`DynamoDBBackend.insert_market_summary` 為 no-op（回 `None`）。不為只寫不讀的稽核 log 新增一張表 + GSI + IAM，違反「簡單優先／不為不可能情境寫程式」。未來若雲端需稽核再補表。
 
+> **2026-07-26 修訂**：上述「market_summaries 雲端不持久化」改為**雲端也持久化**，理由是 production 出現了讀回需求——`generate_market_summary` 改為以 `(summary_date, days_back, news_ids_hash)` 為 key 快取 Groq 輸出，同一天、同 `days_back`、同一組新聞重複呼叫不再打 Groq（省 Groq free-tier TPD 額度）。`DynamoDBBackend.insert_market_summary` 不再是 no-op：沿用既有 `NewsTable`（不新開表），以 `bucket="market_summary"`、`headline="SUMMARY#<summary_date>#<days_back>#<news_ids_hash>"` 當 cache key，帶 2 天 TTL（`NewsTable` 已開 TTL，沿用同一屬性）。`LocalSQLiteBackend` 對應在 `market_summaries` 表補 `summary_date` / `days_back` / `news_ids_hash` 三個欄位（`ALTER TABLE` migration，舊 row 該欄為 NULL 永遠不會命中）。`StorageBackend` Protocol 的 `insert_market_summary` 簽章擴充帶入這三個值，並新增 `get_cached_market_summary`。
+
 ### 4. 三個方法升格進 StorageBackend Protocol
 `insert_news` / `list_news_since` / `insert_market_summary` 因兩個 backend 都實作而成為跨 backend 共用，升格進 `StorageBackend` Protocol（取代 ADR-0004 §7 將它們列為 local-only）。ADR-0003 原則（Protocol 只涵蓋跨 backend 共用方法）不變。`export_rows` 維持 local-only（僅 upload 工具用）。
 

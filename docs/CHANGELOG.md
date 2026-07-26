@@ -26,6 +26,9 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 ## 2026-07-26 — rate-limit-and-replay（round 1） — evaluator — ❌ Fail
 - 連結：docs/qa-reports/rate-limit-and-replay.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 309 passed/12 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 321/321 passed（與 generator 自報一致）；🔴 1、🟡 1；循環次數 1；未解 P0 1（`DynamoDBBackend.increment_rate_limit` 的 `UpdateExpression` 子句順序為 `ADD ... SET ...`，疑似違反 DynamoDB 官方要求的 `SET, REMOVE, ADD, DELETE` 固定順序，moto 測試偽陽性通過，真實環境可能對每則訊息拋 `ValidationException` 且 webhook 未包 try/except，等同全站中斷；建議改成 `SET ... ADD ...`）。其餘需求項目（rate limiter 限流邏輯、通知只發一次的原子性、infra 權限範圍、上一題重放邏輯與不寫史）皆已驗證正確。
+## 2026-07-26 — market-summary-cache — evaluator — ✅ Pass
+- 連結：docs/qa-reports/market-summary-cache.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 299/311 passed（沙箱下 12 個 `test_local_integration.py` 因 socket bind 被擋，停用沙箱重跑全綠 26/26，非 regression，合計 311/311）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。`generate_market_summary` 以 `(summary_date, days_back, news_ids_hash)` 為 key 快取 Groq 輸出，命中不打 Groq 也不重打 `fetch_index_quotes()`；`get_market_summary`/`push_daily_summary` 呼叫端相容性核對皆通過；SQLite `market_summaries` 補三欄 + ALTER TABLE migration（冪等、僅 `_init_schema()` 執行一次）；DynamoDB `insert_market_summary` 由 no-op 改為寫入既有 NewsTable（`bucket="market_summary"`，~2 天 TTL，未動 infra）；ADR-0006 §3 以附加修訂段落記錄，未重寫原文；測試涵蓋同天不重打 Groq（兩個 backend）、news 集合變重打、days_back 不共用、SQLite 舊 schema migration、DynamoDB TTL 屬性正確共 5 類情境。
 
 ## 2026-07-25 — time-consistency-fixes — evaluator — ✅ Pass
 - 連結：docs/qa-reports/time-consistency-fixes.md
