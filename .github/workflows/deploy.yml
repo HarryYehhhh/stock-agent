@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -32,7 +33,7 @@ jobs:
 
   deploy:
     needs: test
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     # 同一時間只允許一個 deploy job：後來的 run 排隊等前一個完成，
     # 不取消進行中的部署（中斷 sam deploy 會留下半套 changeset）。
     # 避免 CloudFormation "UPDATE_IN_PROGRESS state and can not be updated"

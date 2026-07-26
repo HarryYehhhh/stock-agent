@@ -79,6 +79,7 @@ See `.env.example`. Required keys: `GROQ_API_KEY`, `FINNHUB_API_KEY`, `TELEGRAM_
 - **`feature` skill** — 方向已討論清楚的小功能、修 bug、補測試。流程：generator（實作 + 測試）→ evaluator（驗收 + QA report 寫入 `docs/qa-reports/`、追加 `docs/CHANGELOG.md`）。不自動 commit/PR。
 - **`sprint` skill** — 新功能或需要 spec/contract 的大改動。流程：planner（`docs/specs/` + `docs/contracts/`，必要時 ADR）→ generator → evaluator → 自動 commit、push、開 PR。
 - 只有純問答、trivial 一行修改、或使用者明確要求直接改時才跳過 harness。
+- 開 PR 時一律掛 `auto-merge` label：checks 全綠後 Auto Merge workflow 會自動 squash merge，並 dispatch deploy workflow 完成部署（GITHUB_TOKEN 的 merge push 不會觸發 push workflow，deploy 靠 dispatch 補上）。
 - **實作與驗證一律經 feature/sprint skill dispatch 的 generator/evaluator**，不要直接派其他 agent 執行開發任務。全域的 `infra-engineer`（部署執行、部署後驗證）與 `monitoring-engineer`（線上診斷、observability 設計）只負責 harness 之外的維運工作；它們發現需要改 code 或 IaC 時，回到 harness 流程處理。
 
 ## Deployment & Ops
