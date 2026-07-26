@@ -15,6 +15,14 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-26 — deploy-pipeline-hardening（round 2，最終） — evaluator — ✅ Pass
+- 連結：docs/qa-reports/deploy-pipeline-hardening.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 停用沙箱重跑 332/332 passed（與 round 1、generator 自報一致）；`sam validate --lint` valid；🔴 0、🟡 0；循環次數 2；未解 P0/P1 0/0。round 1 的兩個 🔴 已修正並複驗（親自用 stub aws/sam binary 重跑，非僅信自報）：🔴1 `smoke-test-processor` 改用 `if ! INVOKE_META=$$(... 2>&1); then exit 1; fi` 包住 `aws lambda invoke`，親測成功/FunctionError/CLI 呼叫本身失敗三分支皆正確 fail-closed（CLI 失敗分支不再誤判為通過），暫存 response file 三分支皆確認清理，且完整 `make deploy` 鏈路（stub sam+aws）exit code 正確傳播；🔴2 `.github/workflows/deploy.yml` 在 `SAM deploy` step 後新增 `Post-deploy smoke test` step 跑 `make smoke-test-processor STACK=earnings-agent REGION=ap-northeast-1`，確認位置/credentials 沿用/region 一致/working directory/YAML 語法皆正確。新增 1 條 🟢（`2>&1` 混合 stdout/stderr 在極低機率「invoke 成功但 stderr 有雜訊」情境下仍可能誤判，不阻塞）；round 1 的 🟡（`$(STACK)`/`AppName` 命名耦合）本輪未處理，維持邊界情境不影響合併。可合併。
+
+## 2026-07-26 — deploy-pipeline-hardening（round 1） — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/deploy-pipeline-hardening.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 320 passed/12 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 332/332 passed（與 generator 自報一致）；`sam validate --lint` valid；🔴 2、🟡 1；循環次數 1；未解 P0 2。🔴1：`smoke-test-processor` 只檢查回應內 `.FunctionError`，未檢查 `aws lambda invoke` 指令本身的 exit code——invoke API 呼叫層級失敗（函式不存在/權限/節流/網路）時 stdout 為空、jq 靜默回傳空字串，被誤判為「通過」且 exit 0（已用 stub aws binary 實測重現此假通過）。🔴2：`.github/workflows/deploy.yml` 的 `deploy` job（push to main 實際生產部署路徑，即造成 2026-07-24 事故的路徑）仍直接呼叫 `sam deploy`，未串接本次的 smoke test，需向使用者確認是否也要補上。其餘需求（processor invoke payload 無副作用已用新測試鎖住、alarm 沿用既有資源改 Period 300→60 的取捨合理）皆已驗證通過。可合併前需先修 🔴1，🔴2 待使用者決定範圍。
+
 ## 2026-07-26 — trading-day-summary-gate — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/trading-day-summary-gate.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 318 passed/12 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 330/330 passed（與 generator 自報一致）；🔴 0、🟡 1（`push_daily_summary()` 非交易日 skip log 用 `date.today()`（系統/UTC）而非 `_is_trading_day()` 實際判斷的 America/New_York 日期，Lambda 環境下兩者在 10:00 Taipei notify 執行時系統性差一天，會誤導依賴 log 日期欄位的每日健檢流程，不影響推播正確性本身）；循環次數 1；未解 P0/P1 0/0。需求 1-5（NY 日期判斷、週末不打 API、假日清單+tradingHour 空字串、半日仍推、API 失敗 fail-open、scheduler_handler.py/refresh_news 完全未動）皆已逐條驗證通過，8 條新測試涵蓋週末/全日休市/半日/平日/fail-open/API 參數/skip 整合，全 mock 無真實 API；既有 `push_daily_summary` 測試補的 `_is_trading_day → True` monkeypatch 經實測確認為必要修補（今日為週日，若無此 monkeypatch 既有測試會被新 gate 擋下失敗）。可合併，🟡 可視情況先合併後補或本輪回修。

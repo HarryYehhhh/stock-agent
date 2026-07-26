@@ -1,4 +1,4 @@
-.PHONY: install test lint dev chat check-bot notify-earnings sync-earnings daily-summary sync-dynamodb sync-from-dynamodb build deploy ecr-lifecycle set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
+.PHONY: install test lint dev chat check-bot notify-earnings sync-earnings daily-summary sync-dynamodb sync-from-dynamodb build deploy smoke-test-processor ecr-lifecycle set-webhook set-webhook-local delete-webhook logs-webhook logs-processor logs-scheduler ssm-put ddb-tables ddb-scan ddb-count
 
 REGION ?= ap-northeast-1
 STACK ?= earnings-agent
@@ -48,6 +48,34 @@ build:
 
 deploy:
 	cd infra && sam deploy --stack-name $(STACK) --region $(REGION) --capabilities CAPABILITY_IAM --resolve-image-repos --resolve-s3 $(if $(GUIDED),--guided,)
+	$(MAKE) smoke-test-processor
+
+# Post-deploy smoke test：sam deploy 成功後 invoke 一次 processor Lambda（無副作用的空
+# Records payload，見 tests/test_processor_handler.py::test_handler_empty_records_is_noop），
+# 確認 cold start 沒有 import 階段的 crash（例如 2026-07-24 groq 套件短暫缺漏那次事故，
+# 靠使用者流量觸發 3 次 SQS 重試進 DLQ 才被發現）。fail-closed：aws invoke 這個 CLI 呼叫
+# 本身失敗（函式不存在/權限不足/節流/網路錯誤）或 invoke response 帶 FunctionError，
+# 都視為失敗，印出錯誤內容並以非零 exit code 結束；只有「invoke 成功且無 FunctionError」
+# 才算通過。
+smoke-test-processor:
+	@echo "==> smoke testing $(STACK)-processor ($(REGION))"
+	@RESPONSE_FILE=$$(mktemp); \
+	if ! INVOKE_META=$$(aws lambda invoke --function-name $(STACK)-processor --region $(REGION) \
+	  --cli-binary-format raw-in-base64-out --payload '{"Records": []}' "$$RESPONSE_FILE" 2>&1); then \
+	  echo "❌ processor smoke test FAILED: aws lambda invoke command itself failed"; \
+	  echo "$$INVOKE_META"; \
+	  rm -f "$$RESPONSE_FILE"; \
+	  exit 1; \
+	fi; \
+	FUNCTION_ERROR=$$(echo "$$INVOKE_META" | jq -r '.FunctionError // empty'); \
+	if [ -n "$$FUNCTION_ERROR" ]; then \
+	  echo "❌ processor smoke test FAILED: FunctionError=$$FUNCTION_ERROR"; \
+	  cat "$$RESPONSE_FILE"; \
+	  rm -f "$$RESPONSE_FILE"; \
+	  exit 1; \
+	fi; \
+	rm -f "$$RESPONSE_FILE"; \
+	echo "✅ processor smoke test passed (no ImportModuleError)"
 
 # 為 SAM companion stack 自動建立的 ECR repo 掛上 lifecycle policy（只保留最近 3 個 image）。
 # repo 由 resolve_image_repos 建立，不在 template.yaml 內，重建 stack 後 repo hash 會變，需重跑本 target。
