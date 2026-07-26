@@ -9,6 +9,16 @@ import pytest
 from agent import processor_handler
 
 
+class _Ctx:
+    function_name = "test"
+    memory_limit_in_mb = 128
+    invoked_function_arn = "arn:test"
+    aws_request_id = "req-1"
+
+
+CTX = _Ctx()
+
+
 def _send_update(chat_id: str, text: str) -> None:
     processor_handler._process_update(
         {"message": {"chat": {"id": chat_id}, "text": text}}
@@ -166,3 +176,13 @@ def test_watch_and_unwatch_actually_work_on_dynamodb_backend(aws, fake_send):
     body = fake_send.call_args.args[1]
     assert "AAPL" in body
     assert "僅本地模式" not in body
+
+
+def test_handler_empty_records_is_noop(fake_send):
+    # Locks the post-deploy smoke test's payload assumption: {"Records": []}
+    # must be side-effect free (no Groq/Telegram/DynamoDB calls) so it's safe
+    # to invoke against production after every deploy.
+    result = processor_handler.handler({"Records": []}, CTX)
+
+    assert result == {"statusCode": 200}
+    fake_send.assert_not_called()
