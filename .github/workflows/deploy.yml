@@ -33,6 +33,13 @@ jobs:
   deploy:
     needs: test
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # 同一時間只允許一個 deploy job：後來的 run 排隊等前一個完成，
+    # 不取消進行中的部署（中斷 sam deploy 會留下半套 changeset）。
+    # 避免 CloudFormation "UPDATE_IN_PROGRESS state and can not be updated"
+    # 的並發撞車（2026-07-25 CI 與本地 make deploy 同時跑曾因此失敗）。
+    concurrency:
+      group: deploy-earnings-agent
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     environment: production
     steps:
