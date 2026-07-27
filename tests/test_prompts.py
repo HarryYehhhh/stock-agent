@@ -99,3 +99,13 @@ def test_earnings_playbook_requires_earnings_hour_label_in_reply():
     assert "盤前/盤後/盤中" in content
     assert "bmo/amc/dmh" in content
     assert "時段未定" in content
+
+
+def test_earnings_playbook_open_ended_date_query_uses_future_90_day_window():
+    """「X 的財報是什麼時候」這類未指定區間的開放式日期查詢，date_from/date_to
+    要採未來 90 天視角，且日期一律以 system prompt 的今天日期為準、禁止用過去年份
+    （production 429 事件中模型曾誤用 2024 過去年份重試）。"""
+    content = _playbook_text("earnings.md")
+    assert "財報是什麼時候" in content
+    assert "date_from` 傳今天、`date_to` 傳今天加 90 天" in content
+    assert "禁止使用過去年份" in content
