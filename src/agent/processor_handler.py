@@ -151,7 +151,7 @@ def _process_update(body: dict) -> None:
     history = build_messages(chat_id)
 
     try:
-        reply = run_agent(text, history)
+        reply = run_agent(text, history, chat_id=chat_id)
     except Exception:
         logger.exception("agent failed for chat %s", chat_id)
         send_message(chat_id, "⚠️ 抱歉，剛才出了點問題，請稍後再試。")

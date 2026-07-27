@@ -12,6 +12,8 @@ SYSTEM_INSTRUCTION = (
     "輸出格式使用 Telegram Markdown：粗體寫成 *text*，程式碼寫成 `text`，不要使用 ** 或 __。"
     "EPS 用美元符號（$0.89），營收用 B/M 縮寫（24.6B、500M）。"
     "Finnhub earnings hour 欄位代碼：bmo=盤前、amc=盤後、dmh=盤中。"
+    "回覆財報資訊時，每筆都要附上完整日期（年月日，例如 2026-07-29）與發布時段"
+    "（盤前/盤中/盤後）；hour 欄位缺漏時標示「時段未定」，不要省略或猜測。"
     "需要即時市場資料時主動呼叫工具，不要憑空猜測數字。"
     "需要多項資料時，在同一輪一次呼叫所有需要的工具，不要分次查詢。"
     "查詢即時股價或當日漲跌時呼叫 get_quote。"
@@ -67,6 +69,35 @@ def summary_system_prompt(days_back: int = 1) -> str:
         summary_heading=summary_heading,
         coverage_note=coverage_note,
     )
+
+WATCHLIST_EMPTY_CONTEXT = (
+    "使用者目前追蹤清單（watchlist）是空的。"
+    "只要使用者的問題涉及財報查詢（包含指定特定公司/ticker 的財報查詢），"
+    "一律不要呼叫任何財報相關工具，直接回覆請使用者先用 /watch <SYMBOL>"
+    "（例如 /watch AAPL）建立追蹤清單。"
+    "非財報類問題（例如股價 get_quote、新聞 get_stock_news）不受此限制，正常回答。"
+)
+
+
+def watchlist_context(symbols: list[str]) -> str:
+    """Build the system message that scopes earnings queries to the user's
+    watchlist. Empty watchlist blocks all earnings queries (WATCHLIST_EMPTY_CONTEXT);
+    non-empty watchlist injects only the symbol list (kept minimal for token
+    budget) plus the per-symbol query rule."""
+    if not symbols:
+        return WATCHLIST_EMPTY_CONTEXT
+    symbol_list = "、".join(symbols)
+    return (
+        f"使用者的追蹤清單（watchlist）：{symbol_list}。"
+        "使用者問泛用財報問題（未指定特定公司，例如「這週有哪些公司發財報」）時，"
+        "只回答追蹤清單內的公司：針對清單中每個 symbol 個別帶入 symbol 參數呼叫"
+        "get_earnings_calendar（同一輪內一次呼叫所有需要的 symbol），"
+        "不要不帶 symbol 查詢整體財報行事曆後自行篩選，避免當週財報家數超過回傳筆數"
+        "上限而漏掉追蹤清單中的公司。"
+        "使用者訊息中已明確指定公司或 ticker 時，只查詢並回答該公司，"
+        "不要連帶回覆整個追蹤清單。"
+    )
+
 
 COMPANY_PROMPT_TEMPLATE = (
     "明天（{tomorrow}）{symbol}將公布財報，快取資料：{row}\n\n"

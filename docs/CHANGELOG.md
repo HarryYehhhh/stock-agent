@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-28 — watchlist-scoped-earnings — evaluator — ✅ Pass
+- 連結：docs/qa-reports/watchlist-scoped-earnings.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 462/462 passed（沙盒內 13 個既知 `test_local_integration.py` socket bind PermissionError 與本次改動無關，停用沙盒重跑全綠）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。`run_agent(chat_id=...)` 注入 watchlist system message（空清單阻擋含明確 ticker 的財報查詢，且連 code-level fast path 一併跳過）；`/watch` 指令提示與 `processor_handler.py` 實際 routing 逐字核對一致；財報回覆日期/盤前中後格式規則已補進 `SYSTEM_INSTRUCTION`。diff 集中 4 檔 + 1 新測試檔，surgical。可合併。
+
 ## 2026-07-28 — earnings-tool-slim — evaluator — ✅ Pass
 - 連結：docs/qa-reports/earnings-tool-slim.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 452/452 passed（沙盒內 `test_local_integration.py` 13 個既知 socket bind PermissionError 與本次改動無關，停用沙盒重跑全綠）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。`EARNINGS_ROW_LIMIT` 50→25（`_select_rows` 日期覆蓋邏輯零改動）、`EARNINGS_FIELDS` 移除 `quarter`/`year`（獨立 grep 確認無 production 消費者）、欄位過濾改 `it.get(k) is not None` 剔除 null 欄位且不誤殺 falsy 合法值；DB upsert（DynamoDB moto 端到端 + SQLite）確認缺 key 不炸。diff 僅動 earnings.py + 對應測試，surgical。可合併。

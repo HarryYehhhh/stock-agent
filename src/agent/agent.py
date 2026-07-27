@@ -11,9 +11,10 @@ from functools import lru_cache
 from groq import APIStatusError, BadRequestError, Groq
 
 from agent.config import groq_api_key
+from agent.db.watchlist import get_watchlist
 from agent.fast_path import extract_ticker, try_fast_answer
 from agent.knowledge.retrieval import PLAYBOOKS_DIR, Section, retrieve_scored
-from agent.prompts import SYSTEM_INSTRUCTION
+from agent.prompts import SYSTEM_INSTRUCTION, watchlist_context
 from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
 
 log = logging.getLogger(__name__)
@@ -117,17 +118,34 @@ def _build_history_messages(history: list[dict]) -> list[dict]:
     return messages
 
 
-def run_agent(user_message: str, history: list[dict]) -> str:
-    """Run the Groq tool-use loop until completion. Returns the final assistant text."""
-    fast_answer = try_fast_answer(user_message)
-    log.info(
-        "fast_path query=%r ticker=%s hit=%s",
-        user_message,
-        extract_ticker(user_message),
-        fast_answer is not None,
-    )
-    if fast_answer is not None:
-        return fast_answer
+def run_agent(user_message: str, history: list[dict], chat_id: str | None = None) -> str:
+    """Run the Groq tool-use loop until completion. Returns the final assistant text.
+
+    chat_id: when provided, the caller's watchlist is injected as a system
+    message that scopes earnings queries to it (empty watchlist blocks
+    earnings queries entirely). Omitted for internal/non-chat callers
+    (e.g. scheduler's per-company summary generation) where watchlist
+    scoping doesn't apply.
+    """
+    # Empty watchlist blocks earnings queries entirely (including explicit-
+    # ticker ones), so the fast path — which answers a ticker's earnings
+    # date directly without going through the LLM/system prompt — must be
+    # skipped in that case; skip it entirely for a scoped chat_id whose
+    # watchlist is empty.
+    symbols: list[str] | None = None
+    if chat_id is not None:
+        symbols = [item["symbol"] for item in get_watchlist(chat_id)]
+
+    if symbols is None or symbols:
+        fast_answer = try_fast_answer(user_message)
+        log.info(
+            "fast_path query=%r ticker=%s hit=%s",
+            user_message,
+            extract_ticker(user_message),
+            fast_answer is not None,
+        )
+        if fast_answer is not None:
+            return fast_answer
 
     messages: list[dict] = [
         {
@@ -135,6 +153,9 @@ def run_agent(user_message: str, history: list[dict]) -> str:
             "content": f"今天日期是 {date.today().isoformat()}。\n{SYSTEM_INSTRUCTION}",
         }
     ]
+
+    if symbols is not None:
+        messages.append({"role": "system", "content": watchlist_context(symbols)})
 
     # Pre-injection (ADR-0009): retrieve against the *current* user message
     # only (never history, to structurally resist history-pollution) before

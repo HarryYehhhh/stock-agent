@@ -178,6 +178,16 @@ def test_watch_and_unwatch_actually_work_on_dynamodb_backend(aws, fake_send):
     assert "僅本地模式" not in body
 
 
+def test_run_agent_called_with_chat_id(local_store, fake_send, monkeypatch):
+    mock_run_agent = MagicMock(return_value="agent reply")
+    monkeypatch.setattr(processor_handler, "run_agent", mock_run_agent)
+
+    _send_update("111", "明天有哪些公司發財報")
+
+    mock_run_agent.assert_called_once()
+    assert mock_run_agent.call_args.kwargs["chat_id"] == "111"
+
+
 def test_handler_empty_records_is_noop(fake_send):
     # Locks the post-deploy smoke test's payload assumption: {"Records": []}
     # must be side-effect free (no Groq/Telegram/DynamoDB calls) so it's safe
