@@ -221,6 +221,13 @@ def test_judge_report_caveat_reflects_earnings_and_news_haystack(aws, mock_groq)
     assert "時間錯位" in report
     assert "TTL 淘汰" in report
     assert "快照缺料" in report
+    # ADR-0012: news 節切至 symbol×日期粒度後，命中節完整證據進 prompt caveat。
+    assert "symbol×日期粒度" in report
+    assert "完整證據" in report
+    assert "MAX_SECTION_CHARS" in report
+    # 殘留尾端截斷 caveat（非 TTL、非幻覺）。
+    assert "殘留尾端" in report
+    assert "非 bot 幻覺" in report
 
 
 def test_pair_qa_next_assistant_and_dangling_user_skipped():

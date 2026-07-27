@@ -36,8 +36,15 @@ log = logging.getLogger(__name__)
 # Prompt token-saving character caps (D5: left to generator). Applied to the
 # question/answer text embedded in the judge prompt and to each retrieved
 # section's content -- both can otherwise be long enough to dominate cost.
+# 2000 (spec default) under-covers real earnings-week peak volume (see
+# generator DoD real-dump measurement: P95 ~4.5k chars on 2026-07-24, a
+# multi-mega-cap earnings week). 2500 is the contract's authorized ceiling
+# (docs/contracts/news-section-granularity.md Deliverable B) and stays
+# within the token budget analyzed in the spec (~4,000 token/request,
+# well under Groq TPM 12000); it does not fully close the gap on the most
+# extreme earnings-week days but meaningfully reduces truncation vs. 1000.
 MAX_TEXT_CHARS = 800
-MAX_SECTION_CHARS = 1000
+MAX_SECTION_CHARS = 2500
 
 _VERDICTS = ("grounded", "ungrounded", "no-data")
 
@@ -229,7 +236,7 @@ def _write_report(date_str: str, results: list[dict[str, Any]]) -> Path:
             "兩者可能有時間差（spec D2）。"
         ),
         (
-            "- haystack 範圍：快照現含 earnings + news（ADR-0011），"
+            "- haystack 範圍：快照現含 earnings + news（ADR-0011/0012），"
             "一般新聞涵蓋近 ~14 天、市場摘要涵蓋近 ~2 天，"
             "皆為 dump 當下 NewsTable 的內容。"
         ),
@@ -237,6 +244,16 @@ def _write_report(date_str: str, results: list[dict[str, Any]]) -> Path:
             "- 時間錯位：若對話問的新聞早於快照保留期（一般新聞 >14 天 / "
             "市場摘要 >2 天前）已被 TTL 淘汰、快照無此料，此時判 no-data "
             "屬「快照缺料」，非 bot 幻覺，請搭配 verdict 細節與檢索來源自行判讀。"
+        ),
+        (
+            "- news 節現為 symbol×日期粒度（ADR-0012），命中節的完整證據"
+            "（至 MAX_SECTION_CHARS 取證上限）會進 judge prompt，"
+            "不再因單一大節被截斷而漏掉仍在保留窗口內的舊證據。"
+        ),
+        (
+            "- 殘留尾端：單一 symbol×日期節新聞量特大（> MAX_SECTION_CHARS 取證上限）時，"
+            "該日最舊數則仍可能被截；實測顯示財報週熱門 symbol（多檔大型股同週報財報）"
+            "較常觸發此情況（非僅單一極端案例），仍非 TTL 時間錯位、非 bot 幻覺。"
         ),
         "",
     ]

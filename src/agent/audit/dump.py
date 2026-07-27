@@ -91,7 +91,9 @@ def _dump_earnings(date_str: str) -> Path:
     return out_path
 
 
-_NEWS_SUMMARY_CHARS = 200
+_NEWS_SUMMARY_CHARS = 150
+
+_UNKNOWN_DATE = "日期未知"
 
 
 def _truncate_summary(text: str) -> str:
@@ -101,25 +103,43 @@ def _truncate_summary(text: str) -> str:
     return text[:_NEWS_SUMMARY_CHARS] + "…（截斷）"
 
 
-def _sort_news_rows(rows: list[dict]) -> list[dict]:
-    """published_at descending (newest first); rows sharing the same day
-    tiebreak on headline ascending (spec: "同日以 headline 字母序 tiebreak").
-    Two-pass stable sort: sort by headline first, then stably sort by day
-    descending so same-day rows keep their headline-ascending order."""
-    rows = sorted(rows, key=lambda it: it.get("headline", ""))
-    return sorted(rows, key=lambda it: (it.get("published_at") or "")[:10], reverse=True)
+def _group_by_date(rows: list[dict], date_key_field: str | None = None) -> dict[str, list[dict]]:
+    """Group rows by day. date_key_field selects an explicit date field
+    (e.g. "summary_date"); otherwise the date is taken from
+    published_at[:10]. Rows with no date fall into _UNKNOWN_DATE."""
+    groups: dict[str, list[dict]] = {}
+    for it in rows:
+        if date_key_field:
+            date_key = it.get(date_key_field) or _UNKNOWN_DATE
+        else:
+            published = it.get("published_at") or ""
+            date_key = published[:10] if published else _UNKNOWN_DATE
+        groups.setdefault(date_key, []).append(it)
+    return groups
+
+
+def _sorted_date_keys(keys) -> list[str]:
+    """Date-descending (newest first); _UNKNOWN_DATE sorts last."""
+    known = sorted((k for k in keys if k != _UNKNOWN_DATE), reverse=True)
+    if _UNKNOWN_DATE in keys:
+        known.append(_UNKNOWN_DATE)
+    return known
+
+
+def _sort_rows_by_headline(rows: list[dict]) -> list[dict]:
+    """Same-day tiebreak is headline ascending (spec: "同日以 headline
+    字母序 tiebreak")."""
+    return sorted(rows, key=lambda it: it.get("headline", ""))
 
 
 def _format_news_line(item: dict[str, Any]) -> str:
-    published = item.get("published_at") or ""
-    date_part = published[:10] if published else "日期未知"
-    return f"- {date_part} {item.get('headline', '')}：{_truncate_summary(item.get('summary', ''))}"
+    # Date already lives in the section heading (symbol×date / date grouping).
+    return f"- {item.get('headline', '')}：{_truncate_summary(item.get('summary', ''))}"
 
 
 def _format_market_summary_line(item: dict[str, Any]) -> str:
-    summary_date = item.get("summary_date", "日期未知")
     days_back = item.get("days_back", "?")
-    return f"- {summary_date}（近 {days_back} 天）：{_truncate_summary(item.get('summary', ''))}"
+    return f"- （近 {days_back} 天）：{_truncate_summary(item.get('summary', ''))}"
 
 
 def _dump_news(date_str: str) -> Path:
@@ -147,28 +167,39 @@ def _dump_news(date_str: str) -> Path:
         f"- 一般新聞筆數：{len(news_items)}",
         f"- 市場摘要筆數：{len(summary_items)}",
         "- 保留期：一般新聞近 ~14 天、市場摘要近 ~2 天",
+        "- 每 symbol×日期一節（AI 產業新聞、市場摘要則每日期一節）",
     ]
     if not items:
         lines.append("- 近期無資料")
     lines.append("")
 
     for symbol in sorted(by_symbol):
-        lines.append(f"## {symbol} 新聞")
-        lines.extend(_format_news_line(it) for it in _sort_news_rows(by_symbol[symbol]))
-        lines.append("")
+        date_groups = _group_by_date(by_symbol[symbol])
+        for date_key in _sorted_date_keys(date_groups.keys()):
+            lines.append(f"## {symbol} 新聞 {date_key}")
+            lines.extend(
+                _format_news_line(it) for it in _sort_rows_by_headline(date_groups[date_key])
+            )
+            lines.append("")
 
     if ai_items:
-        lines.append("## AI 產業新聞")
-        lines.extend(_format_news_line(it) for it in _sort_news_rows(ai_items))
-        lines.append("")
+        date_groups = _group_by_date(ai_items)
+        for date_key in _sorted_date_keys(date_groups.keys()):
+            lines.append(f"## AI 產業新聞 {date_key}")
+            lines.extend(
+                _format_news_line(it) for it in _sort_rows_by_headline(date_groups[date_key])
+            )
+            lines.append("")
 
     if summary_items:
-        lines.append("## 市場摘要")
-        sorted_summaries = sorted(
-            summary_items, key=lambda it: it.get("summary_date", ""), reverse=True
-        )
-        lines.extend(_format_market_summary_line(it) for it in sorted_summaries)
-        lines.append("")
+        date_groups = _group_by_date(summary_items, date_key_field="summary_date")
+        for date_key in _sorted_date_keys(date_groups.keys()):
+            lines.append(f"## 市場摘要 {date_key}")
+            lines.extend(
+                _format_market_summary_line(it)
+                for it in _sort_rows_by_headline(date_groups[date_key])
+            )
+            lines.append("")
 
     out_dir = SNAPSHOTS_DIR / date_str
     out_dir.mkdir(parents=True, exist_ok=True)
