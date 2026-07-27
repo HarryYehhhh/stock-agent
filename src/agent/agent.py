@@ -8,7 +8,7 @@ import re
 from datetime import date
 from functools import lru_cache
 
-from groq import BadRequestError, Groq
+from groq import APIStatusError, BadRequestError, Groq
 
 from agent.config import groq_api_key
 from agent.knowledge.retrieval import PLAYBOOKS_DIR, Section, retrieve_scored
@@ -164,6 +164,11 @@ def run_agent(user_message: str, history: list[dict]) -> str:
                 ),
             })
             continue
+        except APIStatusError as e:
+            log.warning(
+                "groq API error status=%s: %s", e.status_code, _sanitize_error(str(e))
+            )
+            return "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。"
 
         usage = getattr(response, "usage", None)
         if usage:
