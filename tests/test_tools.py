@@ -302,6 +302,52 @@ def test_news_all_real_returns_unfiltered(mock_http):
     assert len(out) == 5
 
 
+@pytest.mark.parametrize(
+    "symbol,headline",
+    [
+        ("AAPL", "Apple reports record Q3 revenue of $89.5 billion"),
+        ("AAPL", "AAPL shares climb after earnings beat"),
+        ("MSFT", "Microsoft to acquire cybersecurity startup for $2B"),
+        ("GOOGL", "Google unveils new Gemini model"),
+        ("GOOGL", "Alphabet shares rise on ad revenue growth"),
+        ("AMZN", "Amazon expands same-day delivery"),
+        ("NVDA", "Nvidia beats on data center revenue"),
+        ("META", "Meta reports strong ad growth"),
+        ("META", "Facebook parent company raises guidance"),
+        ("TSLA", "Tesla recalls 50,000 vehicles over battery defect"),
+    ],
+)
+def test_is_headline_relevant_matches_ticker_or_alias(symbol, headline):
+    assert news.is_headline_relevant(symbol, headline) is True
+
+
+def test_is_headline_relevant_false_when_headline_only_mentions_another_company():
+    # regression case: Intel-earnings story mentioning Apple as a customer,
+    # tagged AAPL by Finnhub's mention-based tagging, must not pass as an
+    # Apple headline.
+    headline = "How AI-Powered Earnings Powered Intel Stock Higher"
+    assert news.is_headline_relevant("AAPL", headline) is False
+
+
+def test_is_headline_relevant_word_boundary_avoids_substring_false_positive():
+    # "Metaverse" must not match the META ticker/alias substring.
+    assert news.is_headline_relevant("META", "Metaverse startup raises new funding round") is False
+
+
+def test_is_headline_relevant_case_insensitive():
+    assert news.is_headline_relevant("TSLA", "tesla stock jumps on delivery numbers") is True
+
+
+def test_is_headline_relevant_handles_empty_and_none():
+    assert news.is_headline_relevant("AAPL", None) is False
+    assert news.is_headline_relevant("AAPL", "") is False
+
+
+def test_is_headline_relevant_unknown_symbol_falls_back_to_ticker_match():
+    assert news.is_headline_relevant("NFLX", "Netflix subscriber growth beats estimates") is False
+    assert news.is_headline_relevant("NFLX", "NFLX shares rise after earnings beat") is True
+
+
 # --- quote ---
 
 def test_get_quote_returns_normalized_fields(mock_http):
