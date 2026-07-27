@@ -15,6 +15,15 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-27 — news-haystack — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/news-haystack.md
+- 驗證：Unit 428/428 passed；Integration not required；E2E not required；External Smoke pass（真實 DynamoDB NewsTable dump + judge 真跑 Groq）（blocking: false）
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 428/428 passed 無 regression（sandbox 內 test_local_integration.py 因綁 socket 被沙箱擋下，停用沙箱重跑全綠，與本次改動無關）；contract A/B/C 全部 deliverable ✅、DoD 本機實測皆完成（真實 dump 321 筆一般新聞、0 筆 market_summary 如實記錄；judge 真跑 6 筆，2 筆新聞類 Q/A + 1 筆財報類 Q/A 皆有 verdict 佐證）。獨立以 `retrieve_scored` 對真實快照重測（不只信 generator 分數）：judge 實際查詢型態（question+answer）下混索引不稀釋成立；但改用 contract 逐字驗收查詢（純 `"<SYMBOL> 最近有什麼新聞"`）在真實生產規模資料下 7 個 big7 symbol 中有 6 個仍被 earnings section 壓過，只有 moto 玩具語料通過——ADR-0011 已將此列為已知 trade-off、contract 禁止本 sprint 動 retrieval 核心，不阻塞。另發現 DoD 附的「ungrounded 屬時間錯位」歸因有誤：實查引用標題全部仍在 14 天保留窗口內、真正原因是既有 `MAX_SECTION_CHARS=1000` 截斷了大型新聞 section（本次新增熱門 symbol 大量新聞才首次觸發此路徑）。🔴 0；🟡 2（DoD 歸因訂正 + ADR trade-off 補實測數據，均建議記錄/後續跟進、不阻塞）；🟢 2；循環次數 1；未解 P0/P1 0/0。可合併。
+
+## 2026-07-27 — news-haystack — planner — spec + contract + ADR 完成
+- 連結：docs/specs/news-haystack.md, docs/contracts/news-haystack.md, docs/decisions/0011-news-haystack.md
+- 備註：落成 snapshot-audit（ADR-0010）Future work 第一項——把 production NewsTable 納入 judge haystack，消除 v1「新聞類 Q/A 一律 no-data」限制。dump 擴充：`--table` 加 `news`，`_dump_news` 單次 scan NewsTable 依 bucket 分流 → `snapshots/<date>/news.md`（`big7` 每 symbol `## <SYMBOL> 新聞`、`ai` `## AI 產業新聞`、`market_summary` `## 市場摘要`；metadata 置首 heading 前不進索引；排序穩定；英文原樣落地）。judge 只改 `_write_report` caveat 文字（檢索/配對/短路零改動——news.md 落 `snapshots/<date>/` 即被同一混合索引自動納入）。決策：N1 section 切法（symbol/bucket 分 section）；N2 market_summary 納入為 `## 市場摘要`（推翻 ADR-0010 D1 的 v1 scope 暫緩）；**N3 修正需求原「2 天 TTL」描述——查證 backend.py：一般新聞 `bucket="news"` 是 14 天 TTL、只有 market_summary 快取是 2 天 TTL，caveat 據實反映（一般新聞 haystack 深度優於預期）**；N4 judge 前置檢查維持以 earnings.md 為 sentinel、news.md 純加法；N5 截斷上限/欄位交 generator。關鍵驗收：**混索引不互相稀釋正反例**（新聞 Q/A 命中 `news#...`、財報 Q/A 命中 `earnings#<SYMBOL>`），靠 heading 帶類型詞（`## <SYMBOL> 新聞`）避免與 earnings 同 symbol section 撞名。ADR-0011 延伸 0010。DoD：pytest 全綠（moto NewsTable + mock Groq）+ 本機真實 dump（近兩天無資料如實記錄、moto 補證據）+ judge 對新聞類歷史 Q/A（「最近有什麼AAPL新聞」「google最近有什麼新聞」）跑一輪（時段不覆蓋則記為時間錯位 caveat 實例）。下一步交棒 generator。
+
 ## 2026-07-27 — snapshot-audit — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/snapshot-audit.md
 - 驗證：Unit 421/421 passed；Integration not required；E2E not required；External Smoke pass（真實 DynamoDB + Groq）（blocking: false）

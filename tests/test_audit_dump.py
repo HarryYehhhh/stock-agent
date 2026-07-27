@@ -154,6 +154,214 @@ def test_dump_creates_missing_directories(aws, tmp_path):
 
     assert (dump.SNAPSHOTS_DIR / DATE / "earnings.md").is_file()
     assert (dump.AUDIT_DIR / DATE / "conversations.md").is_file()
+    assert (dump.SNAPSHOTS_DIR / DATE / "news.md").is_file()
+
+
+def _put_news(aws, **overrides):
+    item = {
+        "headline": overrides.pop("headline"),
+        "bucket": "news",
+        "published_at": "2026-07-20T00:00:00+00:00",
+        "category": "big7",
+        "summary": "a summary",
+    }
+    item.update(overrides)
+    aws["ddb"].Table("test-news").put_item(Item=item)
+
+
+def test_dump_news_format_sections_and_sort(aws):
+    # Two AAPL headlines on the same day (headline alpha tiebreak) plus one
+    # older AAPL headline (published_at descending), a MSFT headline (symbol
+    # alpha order after AAPL), an AI-category headline (symbol=None), and a
+    # market_summary row. Inserted out of order to prove sort isn't insertion
+    # order.
+    _put_news(
+        aws,
+        headline="Zebra headline wins tiebreak last",
+        published_at="2026-07-25T09:00:00+00:00",
+        symbol="AAPL",
+        summary="English summary for zebra.",
+    )
+    _put_news(
+        aws,
+        headline="Apple headline wins tiebreak first",
+        published_at="2026-07-25T03:00:00+00:00",
+        symbol="AAPL",
+        summary="English summary for apple, same day as zebra.",
+    )
+    _put_news(
+        aws,
+        headline="Older AAPL headline",
+        published_at="2026-07-10T00:00:00+00:00",
+        symbol="AAPL",
+        summary="Should sort after the 2026-07-25 pair.",
+    )
+    _put_news(
+        aws,
+        headline="MSFT cloud news",
+        published_at="2026-07-25T00:00:00+00:00",
+        symbol="MSFT",
+        summary="MSFT summary.",
+    )
+    _put_news(
+        aws,
+        headline="AI chip demand surges",
+        published_at="2026-07-24T00:00:00+00:00",
+        symbol=None,
+        category="ai",
+        summary="AI industry summary.",
+    )
+    aws["ddb"].Table("test-news").put_item(
+        Item={
+            "headline": "SUMMARY#2026-07-27#1#abc123",
+            "bucket": "market_summary",
+            "summary": "今日大盤摘要，科技股領漲。",
+            "summary_date": "2026-07-27",
+            "days_back": 1,
+            "created_at": "2026-07-27T00:00:00+00:00",
+        }
+    )
+
+    assert _run_dump(table="news") == 0
+
+    out_path = dump.SNAPSHOTS_DIR / DATE / "news.md"
+    assert out_path.is_file()
+    text = out_path.read_text(encoding="utf-8")
+
+    head = text.split("## ", 1)[0]
+    assert "產生時間" in head
+    assert "來源表：test-news" in head
+    assert "一般新聞筆數：5" in head
+    assert "市場摘要筆數：1" in head
+    assert "近 ~14 天" in head
+    assert "近 ~2 天" in head
+
+    sections = parse_sections(text, "news")
+    headings = [s.heading for s in sections]
+    # symbol alphabetical order; AI + market_summary are separate sections.
+    assert headings == ["AAPL 新聞", "MSFT 新聞", "AI 產業新聞", "市場摘要"]
+
+    aapl = sections[0]
+    # published_at descending: 2026-07-25 pair before 2026-07-10.
+    idx_jul25_apple = aapl.content.index("Apple headline wins tiebreak first")
+    idx_jul25_zebra = aapl.content.index("Zebra headline wins tiebreak last")
+    idx_jul10 = aapl.content.index("Older AAPL headline")
+    assert idx_jul25_apple < idx_jul25_zebra < idx_jul10
+    # Same-day tiebreak is headline alphabetical: "Apple" before "Zebra".
+    assert "English summary for apple" in aapl.content
+    assert "English summary for zebra" in aapl.content
+
+    msft = sections[1]
+    assert "MSFT cloud news" in msft.content
+
+    ai_section = sections[2]
+    assert "AI chip demand surges" in ai_section.content
+
+    summary_section = sections[3]
+    assert "2026-07-27" in summary_section.content
+    assert "近 1 天" in summary_section.content
+    assert "今日大盤摘要，科技股領漲。" in summary_section.content
+
+
+def test_dump_news_unknown_bucket_ignored(aws):
+    _put_news(aws, headline="Real news", symbol="AAPL")
+    aws["ddb"].Table("test-news").put_item(
+        Item={"headline": "mystery row", "bucket": "something-else"}
+    )
+
+    assert _run_dump(table="news") == 0
+
+    text = (dump.SNAPSHOTS_DIR / DATE / "news.md").read_text(encoding="utf-8")
+    assert "mystery row" not in text
+    assert "Real news" in text
+
+
+def test_dump_news_market_summary_not_mixed_into_general_news(aws):
+    _put_news(aws, headline="AAPL headline", symbol="AAPL")
+    aws["ddb"].Table("test-news").put_item(
+        Item={
+            "headline": "SUMMARY#2026-07-27#1#xyz",
+            "bucket": "market_summary",
+            "summary": "市場摘要獨立內容",
+            "summary_date": "2026-07-27",
+            "days_back": 1,
+        }
+    )
+
+    assert _run_dump(table="news") == 0
+
+    text = (dump.SNAPSHOTS_DIR / DATE / "news.md").read_text(encoding="utf-8")
+    sections = parse_sections(text, "news")
+    aapl_section = next(s for s in sections if s.heading == "AAPL 新聞")
+    summary_section = next(s for s in sections if s.heading == "市場摘要")
+    assert "市場摘要獨立內容" not in aapl_section.content
+    assert "AAPL headline" not in summary_section.content
+
+
+def test_dump_news_empty_table_no_error(aws):
+    assert _run_dump(table="news") == 0
+
+    out_path = dump.SNAPSHOTS_DIR / DATE / "news.md"
+    assert out_path.is_file()
+    text = out_path.read_text(encoding="utf-8")
+    assert "近期無資料" in text
+    sections = parse_sections(text, "news")
+    assert sections == []
+
+
+def test_dump_news_snapshot_is_retrievable(aws):
+    _put_news(
+        aws,
+        headline="NVDA earnings beat expectations",
+        symbol="NVDA",
+        summary="NVDA reported strong quarterly results.",
+    )
+
+    assert _run_dump(table="news") == 0
+
+    hits = retrieve_scored(
+        "NVDA 最近有什麼新聞", top_k=3, source_dir=dump.SNAPSHOTS_DIR / DATE
+    )
+    assert hits
+    assert hits[0][0].source == "news#NVDA 新聞"
+
+
+def test_dump_mixed_index_does_not_dilute_news_vs_earnings(aws):
+    """N4/正反例: earnings.md + news.md coexist under the same snapshot dir
+    (ADR-0011). News queries must hit news#, earnings queries must hit
+    earnings#, without either being outscored by the other."""
+    aws["ddb"].Table("test-earnings-calendar").put_item(
+        Item={
+            "symbol": "AAPL",
+            "earning_date": "2026-08-05",
+            "extended_hour": "bmo",
+            "eps_estimate": Decimal("1.5"),
+            "revenue_estimate": Decimal("94000000000"),
+        }
+    )
+    _put_news(
+        aws,
+        headline="Apple unveils new product lineup",
+        symbol="AAPL",
+        summary="Apple announced several new products this week.",
+    )
+
+    assert _run_dump(table="earnings") == 0
+    assert _run_dump(table="news") == 0
+
+    source_dir = dump.SNAPSHOTS_DIR / DATE
+
+    # 正: 新聞型 query 首命中為 news#。
+    news_hits = retrieve_scored("AAPL 最近有什麼新聞", top_k=3, source_dir=source_dir)
+    assert news_hits
+    assert news_hits[0][0].source == "news#AAPL 新聞"
+
+    # 反: 財報型 query（EPS / 財報日期）首命中為 earnings#。
+    earnings_hits = retrieve_scored(
+        "AAPL EPS 財報日期是什麼時候", top_k=3, source_dir=source_dir
+    )
+    assert earnings_hits
+    assert earnings_hits[0][0].source == "earnings#AAPL"
 
 
 def test_dump_scan_failure_reports_error_no_traceback(aws, monkeypatch, capsys):

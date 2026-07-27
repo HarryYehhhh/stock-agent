@@ -201,6 +201,28 @@ def test_judge_tolerant_json_parsing(aws, mock_groq):
     assert "ungrounded=1" in report
 
 
+def test_judge_report_caveat_reflects_earnings_and_news_haystack(aws, mock_groq):
+    # No news.md needed for this assertion -- the caveat text is static, only
+    # earnings.md (dump sentinel) is required for judge.run to proceed.
+    _seed_earnings(aws)
+    _dump_earnings_snapshot()
+    _seed_message(aws, "111", "2026-07-27T01:00:00+00:00", "user", "AAPL 財報")
+    _seed_message(aws, "111", "2026-07-27T01:00:05+00:00", "assistant", "AAPL 財報 A")
+    mock_groq.chat.completions.create.return_value = _text_response(
+        json.dumps({"verdict": "grounded", "unsupported_claims": [], "reason": "ok"})
+    )
+
+    assert _run_judge() == 0
+
+    report = (judge.AUDIT_DIR / DATE / "report.md").read_text(encoding="utf-8")
+    assert "earnings + news" in report
+    assert "~14 天" in report
+    assert "~2 天" in report
+    assert "時間錯位" in report
+    assert "TTL 淘汰" in report
+    assert "快照缺料" in report
+
+
 def test_pair_qa_next_assistant_and_dangling_user_skipped():
     items = [
         {"chat_id": "1", "timestamp": "t1", "role": "user", "content": "Q1"},

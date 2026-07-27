@@ -1,7 +1,9 @@
-"""Dump DynamoDB tables into dated markdown snapshots (ADR-0010).
+"""Dump DynamoDB tables into dated markdown snapshots (ADR-0010, ADR-0011).
 
 - earnings-calendar -> snapshots/<date>/earnings.md (judge's retrieval haystack;
   format is compatible with agent.knowledge.retrieval's "## " section parser).
+- news (NewsTable, both `news` and `market_summary` buckets) ->
+  snapshots/<date>/news.md, same haystack tree as earnings.md (ADR-0011).
 - conversations -> audit/<date>/conversations.md (human-review dump only;
   `judge` reads Q/A straight from DynamoDB, not from this file -- see D2).
 
@@ -22,7 +24,7 @@ from typing import Any
 import boto3
 
 from agent.audit.paths import AUDIT_DIR, SNAPSHOTS_DIR
-from agent.config import aws_region, conversations_table, earnings_calendar_table
+from agent.config import aws_region, conversations_table, earnings_calendar_table, news_table
 from agent.db.download_remote_store import _scan_all
 
 # Duplicated from agent.fast_path._HOUR_LABELS (module-private there) rather
@@ -37,7 +39,7 @@ def add_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--table",
-        choices=("earnings", "conversations", "all"),
+        choices=("earnings", "conversations", "news", "all"),
         default="all",
         help="要 dump 的表（預設 all）",
     )
@@ -89,6 +91,92 @@ def _dump_earnings(date_str: str) -> Path:
     return out_path
 
 
+_NEWS_SUMMARY_CHARS = 200
+
+
+def _truncate_summary(text: str) -> str:
+    text = text or ""
+    if len(text) <= _NEWS_SUMMARY_CHARS:
+        return text
+    return text[:_NEWS_SUMMARY_CHARS] + "…（截斷）"
+
+
+def _sort_news_rows(rows: list[dict]) -> list[dict]:
+    """published_at descending (newest first); rows sharing the same day
+    tiebreak on headline ascending (spec: "同日以 headline 字母序 tiebreak").
+    Two-pass stable sort: sort by headline first, then stably sort by day
+    descending so same-day rows keep their headline-ascending order."""
+    rows = sorted(rows, key=lambda it: it.get("headline", ""))
+    return sorted(rows, key=lambda it: (it.get("published_at") or "")[:10], reverse=True)
+
+
+def _format_news_line(item: dict[str, Any]) -> str:
+    published = item.get("published_at") or ""
+    date_part = published[:10] if published else "日期未知"
+    return f"- {date_part} {item.get('headline', '')}：{_truncate_summary(item.get('summary', ''))}"
+
+
+def _format_market_summary_line(item: dict[str, Any]) -> str:
+    summary_date = item.get("summary_date", "日期未知")
+    days_back = item.get("days_back", "?")
+    return f"- {summary_date}（近 {days_back} 天）：{_truncate_summary(item.get('summary', ''))}"
+
+
+def _dump_news(date_str: str) -> Path:
+    table_name = news_table()
+    ddb = boto3.resource("dynamodb", region_name=aws_region())
+    items = _scan_all(ddb.Table(table_name))
+
+    news_items = [it for it in items if it.get("bucket") == "news"]
+    summary_items = [it for it in items if it.get("bucket") == "market_summary"]
+
+    by_symbol: dict[str, list[dict]] = {}
+    ai_items: list[dict] = []
+    for it in news_items:
+        symbol = it.get("symbol")
+        if symbol:
+            by_symbol.setdefault(symbol, []).append(it)
+        else:
+            ai_items.append(it)
+
+    lines = [
+        f"# 新聞快照 {date_str}",
+        "",
+        f"- 產生時間：{datetime.now(timezone.utc).isoformat()}",
+        f"- 來源表：{table_name}",
+        f"- 一般新聞筆數：{len(news_items)}",
+        f"- 市場摘要筆數：{len(summary_items)}",
+        "- 保留期：一般新聞近 ~14 天、市場摘要近 ~2 天",
+    ]
+    if not items:
+        lines.append("- 近期無資料")
+    lines.append("")
+
+    for symbol in sorted(by_symbol):
+        lines.append(f"## {symbol} 新聞")
+        lines.extend(_format_news_line(it) for it in _sort_news_rows(by_symbol[symbol]))
+        lines.append("")
+
+    if ai_items:
+        lines.append("## AI 產業新聞")
+        lines.extend(_format_news_line(it) for it in _sort_news_rows(ai_items))
+        lines.append("")
+
+    if summary_items:
+        lines.append("## 市場摘要")
+        sorted_summaries = sorted(
+            summary_items, key=lambda it: it.get("summary_date", ""), reverse=True
+        )
+        lines.extend(_format_market_summary_line(it) for it in sorted_summaries)
+        lines.append("")
+
+    out_dir = SNAPSHOTS_DIR / date_str
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "news.md"
+    out_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return out_path
+
+
 def _dump_conversations(date_str: str) -> Path:
     table_name = conversations_table()
     ddb = boto3.resource("dynamodb", region_name=aws_region())
@@ -128,6 +216,9 @@ def run(args: argparse.Namespace) -> int:
         if args.table in ("earnings", "all"):
             path = _dump_earnings(date_str)
             print(f"dumped earnings -> {path}")
+        if args.table in ("news", "all"):
+            path = _dump_news(date_str)
+            print(f"dumped news -> {path}")
         if args.table in ("conversations", "all"):
             path = _dump_conversations(date_str)
             print(f"dumped conversations -> {path}")
