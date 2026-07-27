@@ -13,9 +13,10 @@ log = logging.getLogger(__name__)
 # Field whitelist for /calendar/earnings rows, kept minimal to control token
 # usage in the LLM tool-result payload. symbol/date/hour/epsEstimate/
 # revenueEstimate are also the only fields the DB backends persist
-# (see db/backend.py upsert_earnings_calendar); epsActual/revenueActual/
-# quarter/year are kept for LLM-facing queries about past earnings but are
-# not currently read by any cache/scheduler consumer.
+# (see db/backend.py upsert_earnings_calendar); epsActual/revenueActual are
+# kept for LLM-facing queries about past earnings but are not currently read
+# by any cache/scheduler consumer. quarter/year are omitted since they're
+# derivable from date and have no production consumer.
 EARNINGS_FIELDS = (
     "symbol",
     "date",
@@ -24,10 +25,8 @@ EARNINGS_FIELDS = (
     "epsActual",
     "revenueEstimate",
     "revenueActual",
-    "quarter",
-    "year",
 )
-EARNINGS_ROW_LIMIT = 50
+EARNINGS_ROW_LIMIT = 25
 
 EARNINGS_TOOL = {
     "name": "get_earnings_calendar",
@@ -97,7 +96,7 @@ def get_earnings_calendar(
         items = [it for it in items if (it.get("symbol") or "").upper() == symbol.upper()]
     items = _select_rows(items, EARNINGS_ROW_LIMIT)
     items = [
-        {k: it[k] for k in EARNINGS_FIELDS if k in it}
+        {k: it[k] for k in EARNINGS_FIELDS if it.get(k) is not None}
         for it in items
     ]
     try:

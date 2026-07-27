@@ -106,12 +106,37 @@ def test_earnings_calendar_strips_non_whitelisted_fields(mock_http, monkeypatch)
     out = earnings.get_earnings_calendar("2026-07-20", "2026-07-24")
 
     assert len(out) == 1
-    assert set(out[0].keys()) == set(earnings.EARNINGS_FIELDS)
+    # epsActual/revenueActual are null on this future-earnings row, so they're
+    # dropped by the null-stripping logic, not just the whitelist.
+    assert set(out[0].keys()) == set(earnings.EARNINGS_FIELDS) - {"epsActual", "revenueActual"}
+    assert "quarter" not in out[0]
+    assert "year" not in out[0]
     assert out[0]["symbol"] == "AAPL"
     assert out[0]["epsEstimate"] == 1.42
 
 
-def test_earnings_calendar_caps_at_50_rows(mock_http, monkeypatch):
+def test_earnings_calendar_drops_null_fields_but_keeps_non_null(mock_http, monkeypatch):
+    fake_backend = MagicMock()
+    monkeypatch.setattr(earnings, "get_backend", lambda: fake_backend)
+    raw_row = {
+        "symbol": "AAPL",
+        "date": "2026-07-23",
+        "hour": "amc",
+        "epsEstimate": 1.42,
+        "epsActual": 1.55,
+        "revenueEstimate": 82000000000,
+        "revenueActual": None,
+    }
+    mock_http.get.return_value = _resp({"earningsCalendar": [raw_row]})
+
+    out = earnings.get_earnings_calendar("2026-07-20", "2026-07-24")
+
+    assert "epsActual" in out[0]
+    assert out[0]["epsActual"] == 1.55
+    assert "revenueActual" not in out[0]
+
+
+def test_earnings_calendar_caps_at_25_rows(mock_http, monkeypatch):
     fake_backend = MagicMock()
     monkeypatch.setattr(earnings, "get_backend", lambda: fake_backend)
     rows = [{"symbol": f"SYM{i}", "date": "2026-07-23"} for i in range(60)]
@@ -119,7 +144,7 @@ def test_earnings_calendar_caps_at_50_rows(mock_http, monkeypatch):
 
     out = earnings.get_earnings_calendar("2026-07-20", "2026-07-24")
 
-    assert len(out) == earnings.EARNINGS_ROW_LIMIT == 50
+    assert len(out) == earnings.EARNINGS_ROW_LIMIT == 25
 
 
 def test_select_rows_covers_every_date_and_ranks_by_revenue_desc_with_none_last():
@@ -177,6 +202,25 @@ def test_earnings_calendar_upserts_thinned_data(mock_http, monkeypatch):
     fake_backend.upsert_earnings_calendar.assert_called_once_with(out)
     upserted = fake_backend.upsert_earnings_calendar.call_args[0][0]
     assert "surprisePercent" not in upserted[0]
+
+
+def test_earnings_calendar_upsert_survives_null_fields_end_to_end(mock_http, aws):
+    """Real DynamoDB backend (via moto) must not crash when hour/epsEstimate/
+    revenueEstimate are absent after null-stripping (future earnings rows)."""
+    raw_row = {
+        "symbol": "AAPL",
+        "date": "2026-07-23",
+        "hour": None,
+        "epsEstimate": None,
+        "epsActual": None,
+        "revenueEstimate": None,
+        "revenueActual": None,
+    }
+    mock_http.get.return_value = _resp({"earningsCalendar": [raw_row]})
+
+    out = earnings.get_earnings_calendar("2026-07-20", "2026-07-24")
+
+    assert out == [{"symbol": "AAPL", "date": "2026-07-23"}]
 
 
 def test_get_company_industry_calls_profile2(mock_http):
