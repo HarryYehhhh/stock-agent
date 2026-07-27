@@ -122,6 +122,39 @@ def test_earnings_calendar_caps_at_50_rows(mock_http, monkeypatch):
     assert len(out) == earnings.EARNINGS_ROW_LIMIT == 50
 
 
+def test_select_rows_covers_every_date_and_ranks_by_revenue_desc_with_none_last():
+    """>limit rows spread across multiple dates: truncation must not let one
+    date (e.g. the alphabetically-first symbols) eat the whole budget. Every
+    date keeps a slot, and within a date, higher revenueEstimate wins with
+    missing values sorted last."""
+    dates = ["2026-07-20", "2026-07-21", "2026-07-22"]
+    items = []
+    for date in dates:
+        for i in range(20):
+            # revenueEstimate descends 190..10 for i=0..17, None for i=18,19
+            revenue = None if i >= 18 else (190 - i * 10)
+            items.append({"symbol": f"{date}-SYM{i}", "date": date, "revenueEstimate": revenue})
+    assert len(items) == 60
+
+    out = earnings._select_rows(items, 50)
+
+    assert len(out) <= 50
+    by_date: dict[str, list[dict]] = {}
+    for row in out:
+        by_date.setdefault(row["date"], []).append(row)
+    assert set(by_date) == set(dates), "every date in range must keep a representative"
+
+    for date in dates:
+        full_sorted = sorted(
+            (it for it in items if it["date"] == date),
+            key=lambda it: (it["revenueEstimate"] is None, -(it["revenueEstimate"] or 0)),
+        )
+        selected = by_date[date]
+        # Selected rows for this date must be exactly the top-N by revenue
+        # (descending, None last), in that same order.
+        assert selected == full_sorted[: len(selected)]
+
+
 def test_earnings_calendar_upserts_thinned_data(mock_http, monkeypatch):
     """Backend upsert only reads symbol/date/hour/epsEstimate/revenueEstimate
     (see db/backend.py upsert_earnings_calendar), a subset of EARNINGS_FIELDS,

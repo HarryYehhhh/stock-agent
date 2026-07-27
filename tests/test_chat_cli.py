@@ -41,6 +41,15 @@ def test_main_configures_info_level_logging(monkeypatch, fake_run_agent):
     assert mock_basic_config.call_args.kwargs["level"] == logging.INFO
 
 
+def test_main_silences_httpx_info_logs_to_avoid_leaking_finnhub_token(monkeypatch, fake_run_agent):
+    """httpx 的 request log 在 INFO 級會印出完整 URL（含 Finnhub token 查詢參數）。"""
+    _feed_input(monkeypatch, ["exit"])
+
+    chat_cli.main()
+
+    assert logging.getLogger("httpx").level == logging.WARNING
+
+
 def test_exit_command_stops_loop_without_calling_agent(monkeypatch, fake_run_agent):
     _feed_input(monkeypatch, ["exit"])
     chat_cli.main()
