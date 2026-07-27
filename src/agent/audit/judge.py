@@ -229,9 +229,14 @@ def _write_report(date_str: str, results: list[dict[str, Any]]) -> Path:
             "兩者可能有時間差（spec D2）。"
         ),
         (
-            "- haystack 範圍：v1 快照僅含財報行事曆資料，新聞/市場摘要類問題"
-            "可能因無對應資料而被判 ungrounded，不代表 bot 編造內容，"
-            "請搭配 verdict 細節與檢索來源自行判讀（spec D1）。"
+            "- haystack 範圍：快照現含 earnings + news（ADR-0011），"
+            "一般新聞涵蓋近 ~14 天、市場摘要涵蓋近 ~2 天，"
+            "皆為 dump 當下 NewsTable 的內容。"
+        ),
+        (
+            "- 時間錯位：若對話問的新聞早於快照保留期（一般新聞 >14 天 / "
+            "市場摘要 >2 天前）已被 TTL 淘汰、快照無此料，此時判 no-data "
+            "屬「快照缺料」，非 bot 幻覺，請搭配 verdict 細節與檢索來源自行判讀。"
         ),
         "",
     ]
