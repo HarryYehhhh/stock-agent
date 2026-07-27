@@ -11,3 +11,5 @@ dist/
 .local/
 CLAUDE.md
 .claude
+/snapshots/
+/audit/

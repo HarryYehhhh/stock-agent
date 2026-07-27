@@ -15,6 +15,15 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-27 — snapshot-audit — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/snapshot-audit.md
+- 驗證：Unit 421/421 passed；Integration not required；E2E not required；External Smoke pass（真實 DynamoDB + Groq）（blocking: false）
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 421/421 passed 無 regression（sandbox 內 test_local_integration.py 因綁 socket 被沙箱擋下，停用 sandbox 重跑全綠，與本次改動無關）；contract A-E 全部 deliverable ✅、DoD 兩項本機實測皆完成（真實 DynamoDB dump 171 筆 earnings + 12 筆 conversations；judge --limit 5 真跑 4 次 Groq + 1 次空命中短路，且抓到一則真實 hallucination：bot 答 META 財報 7/31 vs 快照 7/29 判 ungrounded）。獨立讀碼複驗 `_pair_qa`（懸空/連續 user/非標準 role）、空命中短路（測試+真實跑雙重確認不呼叫 Groq）、`_extract_json` 平衡括號容錯、dump md 與 retrieval.py parser 相容性（真跑 parser 驗證）、Decimal 格式化（無洩漏）、兩棵樹隔離、.gitignore 正確排除實測產物、無密鑰洩漏，均無問題。🔴 0；🟡 1（report.md 未落地 spec D2「時間錯位記於報告 caveat」的既決策，真實跑報告也印證 D1 news-scope 限制易被誤讀為幻覺率虛高，建議補一行 header caveat，純文字不阻塞）；🟢 3（負值 EPS 顯示格式、--limit 0 語意未定義、conversations.md 多行排版細節）；循環次數 1；未解 P0/P1 0/0。可合併。
+
+## 2026-07-27 — snapshot-audit — planner — spec + contract + ADR 完成
+- 連結：docs/specs/snapshot-audit.md, docs/contracts/snapshot-audit.md, docs/decisions/0010-snapshot-audit-offline-llm-judge.md
+- 備註：Phase 2（playbook-grounding spec 明列 future work，也是使用者核心訴求「驗證 LLM 回答依據」）。純本機離線 CLI `python -m agent.audit dump|judge`，不碰線上 runtime。dump：DynamoDB earnings-calendar → `snapshots/<date>/earnings.md`（每 symbol 一 `## ` section、相容 retrieval.py parser、metadata 置首個 heading 前不進索引）、conversations → `audit/<date>/conversations.md`（人工 review）。judge：對 Q/A 逐筆以「問題+回答」跑 `retrieve_scored`（沿用 ADR-0008/0009，source_dir 指快照）→ 命中餵 Groq judge（temperature=0）判 grounded/ungrounded/no-data，空命中短路不呼叫 Groq、`--limit` 預設 10 省 token。決策：D1 v1 只 earnings（haystack）+ conversations（稽核對象），news 列 Future work、market summaries 不做（確認 template.yaml：production 無獨立表，僅 NewsTable 內短 TTL 快取條目）；D2 judge 讀 DynamoDB 而非快照 md（避脆弱 parser，trade-off 記報告 caveat）；D3 Q/A 配對 user→下一 assistant；D4 snapshots/ 與 audit/ 都 gitignore（隱私：內含使用者對話與 chat_id）；D5/D6 judge prompt 措辭、截斷上限、top_k 交 generator。ADR-0010 記離線 LLM-judge over BM25 架構。DoD：pytest 全綠（moto + mock Groq）+ 本機實測 dump 真實 DynamoDB、judge 跑一輪產報告（額度允許真跑，dump 必須真跑通）。下一步交棒 generator。
+
 ## 2026-07-27 — rate-limit-and-fast-path — evaluator — ✅ Pass（複驗，Round 2）
 - 連結：docs/qa-reports/rate-limit-and-fast-path.md
 - 備註：複驗 generator 對 Round 1 🔴 Critical 的修正（只動 `fast_path.py`／`test_fast_path.py`：新增 ticker 與「財報」鄰近性 regex + `_EXCLUDED_TICKERS` 排除清單 AI/IT/ETF/GDP/CPI/SEC/IPO/ESG/CNN/CEO/CFO/EPS/FED/PMI/CES）。`PYTHONPATH=src uv run pytest tests/ -v` 停用沙箱重跑 **398 passed**（與 generator 自報一致），無 regression。重跑 Round 1 全部誤攔 repro case（AI 相關企業財報公布日期、美股AI概念股財報日期、IT 產業財報公布日期、CNN/SEC/GDP 各例）皆確認回 None；4 個既有正例（META/AAPL/NVDA/TSLA）仍正常 HIT。另外自行構造邊角壓測：帶後綴 ticker（`BRK.B 財報日期`）、動詞前綴（`查一下TSM財報什麼時候`）皆正確 HIT；`EPS 財報日期怎麼看`（財務指標縮寫緊鄰財報）被排除清單擋下；`NOW 這檔股票財報日期`／`ON 半導體財報日期`（真實 ticker但非鄰近措辭）與 `TSLA 和 NOW 的財報日期`（多實體問句）皆安全回 None，未見誤答成錯誤公司的風險。🔴 0（Round 1 的 1 件已確認修正）；🟡 0；🟢 3（`try_fast_answer`/`extract_ticker` 重複計算、`_SYMBOL_RE` 缺自動化同步守門、單字母真實 ticker V/C/T/K 理論邊角風險極低不阻塞）；循環次數 2；未解 P0/P1 0/0。可合併。
