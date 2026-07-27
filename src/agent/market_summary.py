@@ -28,7 +28,7 @@ from agent.db.subscribers import get_all_active
 from agent.prompts import summary_system_prompt
 from agent.telegram_client import send_message
 from agent.tools._http import client
-from agent.tools.news import is_junk_headline
+from agent.tools.news import is_headline_relevant, is_junk_headline
 from agent.tools.quote import get_quote
 
 log = Logger()
@@ -138,6 +138,9 @@ def refresh_news(days_back: int = 1) -> int:
         for it in fetched[:MAX_STORE_PER_SYMBOL]:
             headline = (it.get("headline") or "").strip()
             if not headline or is_junk_headline(headline):
+                continue
+            if not is_headline_relevant(symbol, headline):
+                log.info("headline filtered as not about %s: %s", symbol, headline)
                 continue
             items.append({
                 "category": "big7",

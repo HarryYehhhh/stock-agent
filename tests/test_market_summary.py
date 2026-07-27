@@ -33,7 +33,12 @@ def mock_groq(monkeypatch):
 def mock_finnhub(monkeypatch):
     def fake_company_news(symbol, date_from, date_to):
         return [
-            {"headline": "Shared cross-listed story", "summary": "s", "datetime": 1_800_000_000},
+            {
+                "headline": "Shared cross-listed story mentions Apple Microsoft Alphabet "
+                "Amazon Nvidia Meta and Tesla",
+                "summary": "s",
+                "datetime": 1_800_000_000,
+            },
         ] + [
             {"headline": f"{symbol} story {i}", "summary": "s", "datetime": 1_800_000_000 - i}
             for i in range(5)
@@ -42,7 +47,12 @@ def mock_finnhub(monkeypatch):
     def fake_tech_news():
         return [
             {"headline": "New AI model launched", "summary": "", "datetime": 1_800_000_000},
-            {"headline": "Shared cross-listed story", "summary": "AI", "datetime": 1_800_000_000},
+            {
+                "headline": "Shared cross-listed story mentions Apple Microsoft Alphabet "
+                "Amazon Nvidia Meta and Tesla",
+                "summary": "AI",
+                "datetime": 1_800_000_000,
+            },
             {"headline": "Retail sales climb", "summary": "no keyword here", "datetime": 1_800_000_000},
         ]
 
@@ -164,11 +174,43 @@ def test_refresh_news_stores_and_dedupes(local_store, mock_finnhub):
 
     with sqlite3.connect(local_store) as conn:
         headlines = [r[0] for r in conn.execute("SELECT headline FROM news").fetchall()]
-    assert headlines.count("Shared cross-listed story") == 1
+    assert headlines.count(
+        "Shared cross-listed story mentions Apple Microsoft Alphabet Amazon Nvidia Meta and Tesla"
+    ) == 1
     assert "Retail sales climb" not in headlines
 
     # re-running inserts nothing new
     assert ms.refresh_news(days_back=1) == 0
+
+
+def test_refresh_news_filters_headlines_not_about_the_symbol(local_store, monkeypatch, caplog):
+    """Regression: Finnhub's /company-news is mention-based tagging, so an
+    Intel-earnings story that merely mentions Apple as a customer can get
+    tagged AAPL. Such headlines must be filtered out before storing, and the
+    filtering must be logged for later observation of the miss rate."""
+
+    def fake_company_news(symbol, date_from, date_to):
+        if symbol == "AAPL":
+            return [
+                {"headline": "How AI-Powered Earnings Powered Intel Stock Higher", "summary": "s", "datetime": 1_800_000_000},
+                {"headline": "Apple unveils new iPhone lineup", "summary": "s", "datetime": 1_800_000_000},
+            ]
+        return []
+
+    monkeypatch.setattr(ms, "_fetch_company_news", fake_company_news)
+    monkeypatch.setattr(ms, "_fetch_tech_news", lambda: [])
+
+    with caplog.at_level(logging.INFO):
+        inserted = ms.refresh_news(days_back=1)
+
+    assert inserted == 1
+    with sqlite3.connect(local_store) as conn:
+        headlines = [r[0] for r in conn.execute("SELECT headline FROM news").fetchall()]
+    assert headlines == ["Apple unveils new iPhone lineup"]
+    assert any(
+        "filtered as not about AAPL" in r.message and "Intel Stock Higher" in r.message
+        for r in caplog.records
+    )
 
 
 def test_refresh_news_survives_fetch_errors(local_store, monkeypatch):

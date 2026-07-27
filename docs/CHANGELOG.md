@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-28 — news-headline-relevance — evaluator — ✅ Pass
+- 連結：docs/qa-reports/news-headline-relevance.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 446/446 passed（沙箱內因 socket bind 被擋跑出 13 個 error，屬 `test_local_integration.py` 既有問題與本次改動無關，停用沙箱重跑全綠）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。
+
 ## 2026-07-27 — news-section-granularity — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/news-section-granularity.md
 - 驗證：Unit 430/430 passed；Integration not required；E2E not required；External Smoke pass（真實 DynamoDB NewsTable + conversations 讀取、真實檢索層驗證）（blocking: false）

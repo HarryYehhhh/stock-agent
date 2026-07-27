@@ -43,6 +43,45 @@ def is_junk_headline(headline: str | None) -> bool:
     return bool(headline) and bool(JUNK_HEADLINE_PATTERN.search(headline))
 
 
+# Finnhub's /company-news is mention-based tagging: an article gets tagged
+# to a symbol if it mentions that company anywhere in the body, even just in
+# passing (e.g. an Intel-earnings story mentioning Apple as a customer gets
+# tagged AAPL). `is_headline_relevant()` narrows Big 7 ingestion to articles
+# whose *headline* actually names the company, not just its ticker showing
+# up in Finnhub's tagging.
+BIG7_ALIASES: dict[str, list[str]] = {
+    "AAPL": ["Apple"],
+    "MSFT": ["Microsoft"],
+    "GOOGL": ["Google", "Alphabet"],
+    "AMZN": ["Amazon"],
+    "NVDA": ["Nvidia"],
+    "META": ["Meta", "Facebook"],
+    "TSLA": ["Tesla"],
+}
+
+# `\b` word boundaries prevent substring false positives, e.g. "Meta" must
+# not match "Metaverse".
+_BIG7_HEADLINE_PATTERNS = {
+    symbol: re.compile(
+        r"\b(?:" + "|".join(re.escape(name) for name in [symbol, *aliases]) + r")\b",
+        re.IGNORECASE,
+    )
+    for symbol, aliases in BIG7_ALIASES.items()
+}
+
+
+def is_headline_relevant(symbol: str, headline: str | None) -> bool:
+    """True if `headline` names the Big 7 `symbol` itself — its ticker or a
+    known company alias (case-insensitive, word-boundary matched). Symbols
+    outside `BIG7_ALIASES` fall back to matching the ticker alone."""
+    if not headline:
+        return False
+    pattern = _BIG7_HEADLINE_PATTERNS.get(symbol)
+    if pattern is None:
+        pattern = re.compile(rf"\b{re.escape(symbol)}\b", re.IGNORECASE)
+    return bool(pattern.search(headline))
+
+
 NEWS_TOOL = {
     "name": "get_stock_news",
     "description": (
