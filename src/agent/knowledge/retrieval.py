@@ -22,6 +22,12 @@ _CJK_RANGES = (("一", "鿿"), ("㐀", "䶿"))
 # (src/agent/knowledge/retrieval.py -> src/agent -> src -> <root>).
 _KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "knowledge"
 
+# Two independent index sources (ADR-0009): knowledge/*.md (terminology KB,
+# used by search_knowledge_base) and knowledge/playbooks/*.md (tool-routing
+# playbooks, pre-injected by run_agent). Kept as separate directories so the
+# non-recursive glob() in _load_sections naturally never mixes the two.
+PLAYBOOKS_DIR = _KNOWLEDGE_DIR / "playbooks"
+
 K1 = 1.5
 B = 0.75
 HEADING_WEIGHT = 2
@@ -91,11 +97,14 @@ def parse_sections(md_text: str, stem: str) -> list[Section]:
     return sections
 
 
-def _load_sections() -> list[Section]:
-    if not _KNOWLEDGE_DIR.is_dir():
+def _load_sections(source_dir: Path) -> list[Section]:
+    """Load sections from all *.md files directly under source_dir
+    (non-recursive, so knowledge/playbooks/ is never picked up by a
+    glob over knowledge/*.md and vice versa)."""
+    if not source_dir.is_dir():
         return []
     sections: list[Section] = []
-    for path in sorted(_KNOWLEDGE_DIR.glob("*.md")):
+    for path in sorted(source_dir.glob("*.md")):
         text = path.read_text(encoding="utf-8")
         sections.extend(parse_sections(text, path.stem))
     return sections
@@ -111,8 +120,8 @@ class _Index:
     n: int
 
 
-def _build_index() -> _Index:
-    sections = _load_sections()
+def _build_index(source_dir: Path) -> _Index:
+    sections = _load_sections(source_dir)
     doc_tokens = [
         tokenize(s.heading) * HEADING_WEIGHT + tokenize(s.content) for s in sections
     ]
@@ -132,9 +141,12 @@ def _build_index() -> _Index:
     )
 
 
-@lru_cache(maxsize=1)
-def _get_index() -> _Index:
-    return _build_index()
+@lru_cache(maxsize=None)
+def _get_index(source_dir: Path) -> _Index:
+    # maxsize=None: only two distinct source_dir values ever exist in the
+    # process (knowledge/ and knowledge/playbooks/), each cached independently
+    # so the two indexes never share or pollute each other's state.
+    return _build_index(source_dir)
 
 
 def _idf(term: str, index: _Index) -> float:
@@ -156,10 +168,13 @@ def _bm25_score(query_tokens: list[str], doc_idx: int, index: _Index) -> float:
     return score
 
 
-def retrieve(query: str, top_k: int = 3) -> list[Section]:
-    """Return up to top_k sections ranked by BM25 score, filtering out
-    non-positive scores (no query token matched)."""
-    index = _get_index()
+def retrieve_scored(
+    query: str, top_k: int = 3, source_dir: Path = _KNOWLEDGE_DIR
+) -> list[tuple[Section, float]]:
+    """Return up to top_k (Section, bm25_score) pairs ranked by score,
+    filtering out non-positive scores (no query token matched). Scores
+    are unnormalized BM25 (see K1/B/HEADING_WEIGHT above)."""
+    index = _get_index(source_dir)
     if index.n == 0:
         return []
     query_tokens = tokenize(query)
@@ -171,4 +186,12 @@ def retrieve(query: str, top_k: int = 3) -> list[Section]:
     ]
     scored = [(score, i) for score, i in scored if score > 0]
     scored.sort(key=lambda item: (-item[0], item[1]))
-    return [index.sections[i] for _, i in scored[:top_k]]
+    return [(index.sections[i], score) for score, i in scored[:top_k]]
+
+
+def retrieve(query: str, top_k: int = 3) -> list[Section]:
+    """Return up to top_k sections ranked by BM25 score, filtering out
+    non-positive scores (no query token matched). Unchanged behavior:
+    searches the terminology KB (knowledge/*.md), used by
+    search_knowledge_base."""
+    return [section for section, _ in retrieve_scored(query, top_k, source_dir=_KNOWLEDGE_DIR)]

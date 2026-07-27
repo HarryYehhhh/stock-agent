@@ -6,7 +6,7 @@ Stdlib-only module: no AWS/network involved, no mocking needed.
 from __future__ import annotations
 
 from agent.knowledge import retrieval
-from agent.knowledge.retrieval import Section, parse_sections, retrieve, tokenize
+from agent.knowledge.retrieval import Section, parse_sections, retrieve, retrieve_scored, tokenize
 
 # --- tokenizer ---
 
@@ -129,7 +129,7 @@ def test_retrieve_returns_section_instances():
 
 
 def test_seed_files_each_parse_to_at_least_one_section():
-    index = retrieval._get_index()
+    index = retrieval._get_index(retrieval._KNOWLEDGE_DIR)
     sources_by_file: dict[str, int] = {}
     for section in index.sections:
         stem = section.source.split("#", 1)[0]
@@ -140,7 +140,111 @@ def test_seed_files_each_parse_to_at_least_one_section():
 
 
 def test_seed_sections_have_nonempty_heading_and_content():
-    index = retrieval._get_index()
+    index = retrieval._get_index(retrieval._KNOWLEDGE_DIR)
     for section in index.sections:
         assert section.heading.strip()
         assert section.content.strip()
+
+
+# --- retrieve_scored (ADR-0009: source_dir parameterization) ---
+
+
+def test_retrieve_scored_returns_section_score_pairs():
+    results = retrieve_scored("道瓊怎麼查", top_k=1)
+    assert len(results) == 1
+    section, score = results[0]
+    assert isinstance(section, Section)
+    assert isinstance(score, float)
+    assert score > 0
+
+
+def test_retrieve_scored_scores_are_descending():
+    results = retrieve_scored("EPS beat", top_k=5)
+    scores = [score for _, score in results]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_retrieve_matches_retrieve_scored_default_source():
+    """retrieve()'s behavior/default index (knowledge/*.md) is unchanged:
+    it must equal retrieve_scored() against _KNOWLEDGE_DIR with scores dropped."""
+    query = "道瓊怎麼查"
+    assert retrieve(query, top_k=2) == [
+        section for section, _ in retrieve_scored(query, top_k=2, source_dir=retrieval._KNOWLEDGE_DIR)
+    ]
+
+
+def test_retrieve_scored_irrelevant_query_returns_empty():
+    assert retrieve_scored("今天天氣如何", source_dir=retrieval._KNOWLEDGE_DIR) == []
+
+
+# --- two-index isolation (ADR-0009) ---
+
+
+def test_kb_index_never_contains_playbook_file_stems():
+    index = retrieval._get_index(retrieval._KNOWLEDGE_DIR)
+    stems = {s.source.split("#", 1)[0] for s in index.sections}
+    assert stems.isdisjoint({"market-trends", "earnings", "stock-news"})
+
+
+def test_playbook_index_only_contains_playbook_file_stems():
+    index = retrieval._get_index(retrieval.PLAYBOOKS_DIR)
+    stems = {s.source.split("#", 1)[0] for s in index.sections}
+    assert stems
+    assert stems <= {"market-trends", "earnings", "stock-news"}
+
+
+def test_playbook_retrieval_never_returns_kb_headings():
+    results = retrieve_scored("道瓊怎麼查", top_k=5, source_dir=retrieval.PLAYBOOKS_DIR)
+    stems = {section.source.split("#", 1)[0] for section, _ in results}
+    assert stems.isdisjoint({"indices", "earnings-terms", "analysis-frameworks"})
+
+
+def test_kb_retrieval_never_returns_playbook_headings():
+    results = retrieve_scored("本週有什麼公司發布財報", top_k=5, source_dir=retrieval._KNOWLEDGE_DIR)
+    stems = {section.source.split("#", 1)[0] for section, _ in results}
+    assert stems.isdisjoint({"market-trends", "earnings", "stock-news"})
+
+
+# --- playbook file sanity (contract deliverable #1) ---
+
+_PLAYBOOK_SUBSECTIONS = ("觸發語", "工具指引", "回覆要求", "禁止")
+
+
+def test_each_playbook_file_parses_at_least_one_section():
+    index = retrieval._get_index(retrieval.PLAYBOOKS_DIR)
+    stems = {s.source.split("#", 1)[0] for s in index.sections}
+    assert stems == {"market-trends", "earnings", "stock-news"}
+
+
+def test_each_playbook_section_has_all_four_subsections():
+    index = retrieval._get_index(retrieval.PLAYBOOKS_DIR)
+    assert index.sections, "expected at least one playbook section"
+    for section in index.sections:
+        for marker in _PLAYBOOK_SUBSECTIONS:
+            assert marker in section.content, f"{section.source} missing 「{marker}」"
+
+
+# --- earnings playbook query hits (contract "Tests required") ---
+
+
+def test_earnings_calendar_query_top1_is_earnings_calendar_section():
+    """Raw BM25 top-1 (no MIN_SCORE threshold) must be the earnings calendar
+    section. Exclusion of unrelated stock-news sections from the actually
+    *injected* set is threshold-dependent and covered at the
+    agent._retrieve_playbook_hits level (see test_playbook_injection.py)."""
+    results = retrieve_scored("本週有什麼公司發布財報", top_k=2, source_dir=retrieval.PLAYBOOKS_DIR)
+    assert results, "expected at least one hit"
+    top_section, _ = results[0]
+    assert top_section.source == "earnings#財報行事曆時間查詢"
+
+
+def test_market_trends_query_hits_market_trends_playbook():
+    results = retrieve_scored("今天大盤怎樣", top_k=2, source_dir=retrieval.PLAYBOOKS_DIR)
+    assert results
+    assert results[0][0].source.startswith("market-trends#")
+
+
+def test_stock_news_query_hits_stock_news_playbook():
+    results = retrieve_scored("AAPL 有什麼新聞", top_k=2, source_dir=retrieval.PLAYBOOKS_DIR)
+    assert results
+    assert results[0][0].source.startswith("stock-news#")

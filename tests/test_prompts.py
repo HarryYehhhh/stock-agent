@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from agent import prompts
+from agent.knowledge.retrieval import PLAYBOOKS_DIR
+
+
+def _playbook_text(filename: str) -> str:
+    return (PLAYBOOKS_DIR / filename).read_text(encoding="utf-8")
 
 
 def test_prompt_constants_are_nonempty_strings():
@@ -65,25 +70,32 @@ def test_summary_system_prompt_period_wording_requires_daily_index_label():
     assert "不得表述成整段期間的變化" in prompt
 
 
-def test_system_instruction_mentions_days_back_cap_and_long_period_mapping():
-    """1a：教 LLM days_back 上限 7，且「本月」等更長期間也要傳 7 並在回覆中說明。"""
-    assert "days_back 上限為 7" in prompts.SYSTEM_INSTRUCTION
-    assert "本月" in prompts.SYSTEM_INSTRUCTION
-    assert "僅涵蓋最近 7 天" in prompts.SYSTEM_INSTRUCTION
+# 以下三則測試對應 ADR-0009 拆遷表 S11/S14/S15/S20：這些規則已從
+# SYSTEM_INSTRUCTION MOVE 到 knowledge/playbooks/，斷言改鎖 playbook 檔案內容。
 
 
-def test_system_instruction_maps_this_week_to_future_date_range():
-    """本週/近期/接下來/最近等時間詞詢問財報行事曆時，date_from/date_to 採未來視角。"""
-    assert "本週" in prompts.SYSTEM_INSTRUCTION
-    assert "近期" in prompts.SYSTEM_INSTRUCTION
-    assert "接下來" in prompts.SYSTEM_INSTRUCTION
-    assert "最近" in prompts.SYSTEM_INSTRUCTION
-    assert "date_from 傳今天日期，date_to 傳今天加 7 天" in prompts.SYSTEM_INSTRUCTION
-    assert "過去或已公布的財報" in prompts.SYSTEM_INSTRUCTION
+def test_market_trends_playbook_mentions_days_back_cap_and_long_period_mapping():
+    """S14/S15：教 LLM days_back 上限 7，且「本月」等更長期間也要傳 7 並在回覆中說明。"""
+    content = _playbook_text("market-trends.md")
+    assert "上限為 7" in content
+    assert "本月" in content
+    assert "僅涵蓋最近 7 天" in content
 
 
-def test_system_instruction_requires_earnings_hour_label_in_reply():
-    """回覆財報行事曆結果時，每筆財報都要標示日期與盤前/盤後/盤中，缺值標「時段未定」。"""
-    assert "盤前/盤後/盤中" in prompts.SYSTEM_INSTRUCTION
-    assert "bmo/amc/dmh" in prompts.SYSTEM_INSTRUCTION
-    assert "時段未定" in prompts.SYSTEM_INSTRUCTION
+def test_earnings_playbook_maps_this_week_to_future_date_range():
+    """S11：本週/近期/接下來/最近等時間詞詢問財報行事曆時，date_from/date_to 採未來視角。"""
+    content = _playbook_text("earnings.md")
+    assert "本週" in content
+    assert "近期" in content
+    assert "接下來" in content
+    assert "最近" in content
+    assert "date_from` 傳今天日期，`date_to` 傳今天加 7 天" in content
+    assert "過去或已公布的財報" in content
+
+
+def test_earnings_playbook_requires_earnings_hour_label_in_reply():
+    """S20：回覆財報行事曆結果時，每筆財報都要標示日期與盤前/盤後/盤中，缺值標「時段未定」。"""
+    content = _playbook_text("earnings.md")
+    assert "盤前/盤後/盤中" in content
+    assert "bmo/amc/dmh" in content
+    assert "時段未定" in content
