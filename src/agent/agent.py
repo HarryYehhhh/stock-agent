@@ -11,6 +11,7 @@ from functools import lru_cache
 from groq import BadRequestError, Groq
 
 from agent.config import groq_api_key
+from agent.knowledge.retrieval import PLAYBOOKS_DIR, Section, retrieve_scored
 from agent.prompts import SYSTEM_INSTRUCTION
 from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
 
@@ -20,6 +21,43 @@ MODEL = "llama-3.3-70b-versatile"
 MAX_TOOL_LOOPS = 10
 
 _TOKEN_RE = re.compile(r"token=[^&\s]+")
+
+# --- Playbook pre-injection (ADR-0009) ---
+# top_k=2 per spec/contract: at most the two best-matching playbook sections
+# are candidates for injection.
+PLAYBOOK_TOP_K = 2
+
+# MIN_SCORE: unnormalized BM25 threshold (see agent.knowledge.retrieval) a
+# playbook section's score must clear to be injected. Calibrated against
+# knowledge/playbooks/ real content (2026-07-27, `python -m agent.knowledge.debug
+# --source playbook`):
+#   - genuine positive-class hits score >= ~6.9 (e.g. "本週有什麼公司發布財報" ->
+#     earnings#財報行事曆時間查詢 = 10.3; "今天大盤怎樣" -> market-trends = 6.9;
+#     "AAPL 有什麼新聞" -> stock-news = 7.3)
+#   - cross-playbook noise from generic phrasing overlap (e.g. "有什麼") tops
+#     out around 2.7; fully irrelevant queries (e.g. "今天天氣如何") top out
+#     around 0.9 (coincidental single-token overlap)
+# 3.5 sits above both noise bands and below every genuine hit observed.
+MIN_SCORE = 3.5
+
+
+def _retrieve_playbook_hits(query: str) -> list[tuple[Section, float]]:
+    """Score the query against the playbook index and keep only sections
+    at or above MIN_SCORE (top_k=2 candidates per PLAYBOOK_TOP_K)."""
+    hits = retrieve_scored(query, top_k=PLAYBOOK_TOP_K, source_dir=PLAYBOOKS_DIR)
+    return [(section, score) for section, score in hits if score >= MIN_SCORE]
+
+
+def _build_playbook_context(hits: list[tuple[Section, float]]) -> str:
+    """Build a system-message string injecting the matched playbook sections,
+    each tagged with its 檔名#標題 source citation (D3)."""
+    parts = [
+        "以下是根據使用者當前問題比對到的操作指引（playbook），"
+        "請依此指引選擇工具與組織回覆，不需要在回覆中提到你參考了指引：",
+    ]
+    for section, _score in hits:
+        parts.append(f"\n[來源：{section.source}]\n{section.content}")
+    return "\n".join(parts)
 
 
 def _sanitize_error(msg: str) -> str:
@@ -52,6 +90,14 @@ def _run_tool(name: str, tool_input: dict) -> dict:
         return {"error": f"unknown tool '{name}'"}
     try:
         result = fn(**tool_input)
+        size = len(result) if isinstance(result, (list, dict, str)) else None
+        log.info(
+            "tool %s succeeded: args=%s result_type=%s result_size=%s",
+            name,
+            _sanitize_error(json.dumps(tool_input, ensure_ascii=False, default=str)),
+            type(result).__name__,
+            size,
+        )
         if isinstance(result, dict):
             return result
         return {"result": result}
@@ -77,6 +123,21 @@ def run_agent(user_message: str, history: list[dict]) -> str:
             "content": f"今天日期是 {date.today().isoformat()}。\n{SYSTEM_INSTRUCTION}",
         }
     ]
+
+    # Pre-injection (ADR-0009): retrieve against the *current* user message
+    # only (never history, to structurally resist history-pollution) before
+    # entering the tool loop.
+    playbook_hits = _retrieve_playbook_hits(user_message)
+    injected = bool(playbook_hits)
+    log.info(
+        "playbook_injection query=%r hits=%s injected=%s",
+        user_message,
+        [{"source": section.source, "score": round(score, 3)} for section, score in playbook_hits],
+        injected,
+    )
+    if injected:
+        messages.append({"role": "system", "content": _build_playbook_context(playbook_hits)})
+
     messages.extend(_build_history_messages(history))
     messages.append({"role": "user", "content": user_message})
 

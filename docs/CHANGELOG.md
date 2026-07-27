@@ -15,7 +15,13 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
-## 2026-07-27 — prompt-history-guard — evaluator — ✅ Pass
+## 2026-07-27 — playbook-grounding — evaluator — ✅ Pass
+- 連結：docs/qa-reports/playbook-grounding.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 355 passed/13 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 368 passed（與 generator 自報一致）。逐行核對 `git diff src/agent/prompts.py` 確認 S3/S4/S7/S10/S11/S13–S20 共 13 條 MOVE 全數移除且語意完整落地三份 playbook、S1/S2/S5/S6/S8/S9/S12/S21/S22–S25 共 10 條 STAY 逐字未動；`retrieval.py` 索引來源參數化、`knowledge/playbooks/` 與 `knowledge/*.md` 雙索引以非遞迴 glob 天然隔離，`search_knowledge_base` 行為/預設索引/回傳結構不變。獨立重跑 `python -m agent.knowledge.debug`（非引用 generator 自報數字）驗證 `MIN_SCORE=3.5` 校準準確：「本週有什麼公司發布財報」top_k=2+門檻後僅 `earnings#財報行事曆時間查詢`（10.323）注入、`stock-news`（2.679）被過濾；負例「AAPL 最近新聞」僅 `stock-news`（3.595）注入、`earnings` 行事曆（0.879）未誤命中。另寫獨立腳本（繞開需要 `GROQ_API_KEY`/網路的 `chat_cli` 沙箱限制、直接呼叫同一 `run_agent()` 入口 + mock Groq client）驗證注入位置（system 之後、history 之前）、`playbook_injection`／`_run_tool` 成功 log 皆如契約所述、args 未見 token 洩漏。🔴 0、🟡 0；🟢 2（playbook 內 section 內部小節輕微語意重複、一則測試用手動 try/finally 而非 monkeypatch fixture，皆 non-blocking）；循環次數 1；未解 P0/P1 0/0。可合併。
+
+## 2026-07-27 — playbook-grounding — planner — spec + contract + ADR 完成
+- 連結：docs/specs/playbook-grounding.md, docs/contracts/playbook-grounding.md, docs/decisions/0009-playbook-grounding-pre-injection.md
+- 備註：Wiki/BM25 playbook grounding（pre-injection）。把工具路由指引從 SYSTEM_INSTRUCTION 拆成 `knowledge/playbooks/` 三份可檢索 md（market-trends/earnings/stock-news），`run_agent()` 開場用當前 user message 對 playbook 索引跑 BM25（沿用 retrieval.py，參數化索引來源目錄、與術語 KB 雙索引隔離），top_k=2 + 新增 MIN_SCORE 門檻，命中才注入含來源標註的 system context，未達門檻 fallback。spec 附 SYSTEM_INSTRUCTION 逐句拆遷分類表（S1–S25，MOVE/STAY）。決策：D1 get_quote 單股路由與 search_knowledge_base 路由無專屬 playbook、留在 SYSTEM_INSTRUCTION（低風險通用路由，設計保留清單明列知識庫引用規範）；D2 MIN_SCORE 值交 generator 實測校準、測試鎖行為不鎖數字；D3 注入措辭交 generator（須含 檔名#標題）。ADR-0009 記 pre-injection 架構（沿用 0008 斷詞/BM25、重申不採 jieba/CKIP/embeddings）。Out of scope：DynamoDB 快照稽核 + LLM-judge 管線=phase 2、scheduler 新聞預篩=另案。下一步交棒 generator。
 - 連結：docs/qa-reports/prompt-history-guard.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 329 passed/13 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 342/342 passed（與 generator 自報一致）。在 `SYSTEM_INSTRUCTION` 加 3 句防對話歷史污染指示（只答當前問題／依本次工具查詢結果非歷史數據／未提及個股不主動附上），對應 production 事件（模型模仿舊回答夾帶未詢問的 AAPL analyst estimates）。Diff 僅 `src/agent/prompts.py` 一個 hunk、3 行新增，符合 surgical change only。🔴 0、🟡 2（皆 non-blocking：語意3 措辭在代名詞追問情境理論上有被模型過度保守解讀的風險，屬 prompt 純文字驗收固有限制，不阻塞；新增 3 句未補對應 `tests/test_prompts.py` substring 斷言，建議後續補上防誤刪）；循環次數 1；未解 P0/P1 0/0。可合併。
 

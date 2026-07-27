@@ -85,10 +85,12 @@ def test_uses_groq_model():
 
 
 def test_system_instruction_is_string():
+    # get_analyst_estimates / get_earnings_calendar routing rules moved to
+    # knowledge/playbooks/earnings.md (ADR-0009 pre-injection); get_quote
+    # routing (S12) stays a generic, non-event tool rule in SYSTEM_INSTRUCTION.
     assert isinstance(agent_module.SYSTEM_INSTRUCTION, str)
     assert "繁體中文" in agent_module.SYSTEM_INSTRUCTION
-    assert "get_analyst_estimates" in agent_module.SYSTEM_INSTRUCTION
-    assert "get_earnings_calendar" in agent_module.SYSTEM_INSTRUCTION
+    assert "get_quote" in agent_module.SYSTEM_INSTRUCTION
 
 
 def test_system_instruction_mentions_knowledge_base():
