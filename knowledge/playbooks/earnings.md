@@ -24,7 +24,7 @@
 
 **觸發語**：AAPL 財報預期、TSLA 分析師怎麼看、NVDA EPS 預期、某公司分析師評級、財報預測、分析師目標價、買入持有賣出評級、明確股票代碼詢問財報
 
-**工具指引**：當用戶提到明確的股票代碼並詢問財報、分析師預期或 EPS 時，同時呼叫 `get_analyst_estimates`（取得分析師共識）和 `get_earnings_calendar`（查詢財報發布日期）。查詢特定 ticker 的財報日期時，務必傳 `symbol` 參數給 `get_earnings_calendar`，避免漏掉冷門股。
+**工具指引**：當用戶提到明確的股票代碼並詢問財報、分析師預期或 EPS 時，同時呼叫 `get_analyst_estimates`（取得分析師共識）和 `get_earnings_calendar`（查詢財報發布日期）。查詢特定 ticker 的財報日期時，務必傳 `symbol` 參數給 `get_earnings_calendar`，避免漏掉冷門股。用戶問「X 的財報是什麼時候」「X 財報何時公布」「X 財報日期」這類未指定區間的開放式日期查詢時，`date_from` 傳今天、`date_to` 傳今天加 90 天；日期一律以 system prompt 提供的今天日期為準，禁止使用過去年份。
 
 **回覆要求**：顯示分析師評級時，列出買入/持有/賣出的數量分佈。
 

@@ -11,6 +11,7 @@ from functools import lru_cache
 from groq import APIStatusError, BadRequestError, Groq
 
 from agent.config import groq_api_key
+from agent.fast_path import extract_ticker, try_fast_answer
 from agent.knowledge.retrieval import PLAYBOOKS_DIR, Section, retrieve_scored
 from agent.prompts import SYSTEM_INSTRUCTION
 from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
@@ -19,6 +20,7 @@ log = logging.getLogger(__name__)
 
 MODEL = "llama-3.3-70b-versatile"
 MAX_TOOL_LOOPS = 10
+MAX_TOOL_USE_FAILED_RETRIES = 3
 
 _TOKEN_RE = re.compile(r"token=[^&\s]+")
 
@@ -117,6 +119,16 @@ def _build_history_messages(history: list[dict]) -> list[dict]:
 
 def run_agent(user_message: str, history: list[dict]) -> str:
     """Run the Groq tool-use loop until completion. Returns the final assistant text."""
+    fast_answer = try_fast_answer(user_message)
+    log.info(
+        "fast_path query=%r ticker=%s hit=%s",
+        user_message,
+        extract_ticker(user_message),
+        fast_answer is not None,
+    )
+    if fast_answer is not None:
+        return fast_answer
+
     messages: list[dict] = [
         {
             "role": "system",
@@ -142,6 +154,7 @@ def run_agent(user_message: str, history: list[dict]) -> str:
     messages.append({"role": "user", "content": user_message})
 
     tools = _build_tools()
+    tool_use_failed_count = 0
 
     for _ in range(MAX_TOOL_LOOPS):
         try:
@@ -155,6 +168,14 @@ def run_agent(user_message: str, history: list[dict]) -> str:
             error_code = e.body.get("error", {}).get("code") if isinstance(e.body, dict) else None
             if error_code != "tool_use_failed":
                 raise
+            tool_use_failed_count += 1
+            if tool_use_failed_count > MAX_TOOL_USE_FAILED_RETRIES:
+                log.warning(
+                    "tool_use_failed exceeded retry limit (%s): %s",
+                    tool_use_failed_count,
+                    _sanitize_error(str(e)),
+                )
+                return "⚠️ 工具呼叫連續失敗，請換個問法再試。"
             log.warning("tool_use_failed, asking model to retry: %s", _sanitize_error(str(e)))
             messages.append({
                 "role": "user",
@@ -168,7 +189,11 @@ def run_agent(user_message: str, history: list[dict]) -> str:
             log.warning(
                 "groq API error status=%s: %s", e.status_code, _sanitize_error(str(e))
             )
-            return "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。"
+            if e.status_code == 413:
+                return "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。"
+            if e.status_code == 429:
+                return "⏳ 今日 AI 額度已用完或請求過於頻繁，請稍後再試。"
+            return "⚠️ AI 服務暫時無法回應，請稍後再試。"
 
         usage = getattr(response, "usage", None)
         if usage:

@@ -66,6 +66,18 @@ def _rate_limit_error() -> RateLimitError:
     return RateLimitError(f"Error code: 429 - {resp.json()}", response=resp, body=resp.json())
 
 
+def _server_error() -> APIStatusError:
+    """Non-413/429 Groq API error (e.g. 500), which has no dedicated exception
+    subclass; the SDK raises the base APIStatusError."""
+    req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    resp = httpx.Response(
+        500,
+        request=req,
+        json={"error": {"message": "internal server error", "type": "server_error"}},
+    )
+    return APIStatusError(f"Error code: 500 - {resp.json()}", response=resp, body=resp.json())
+
+
 def _tool_response(tool_name: str, tool_args: dict):
     tool_call = SimpleNamespace(
         id="call_1",
@@ -223,17 +235,19 @@ def test_non_tool_use_failed_400_still_raises(mock_client):
         agent_module.run_agent("test", [])
 
 
-def test_tool_use_failed_400_exhausts_max_loops(mock_client):
-    """若模型一直修不好參數，重試次數計入 MAX_TOOL_LOOPS，最終走既有的超過
-    最大迴圈次數回覆，不會無窮迴圈。"""
+def test_tool_use_failed_400_exceeds_retry_cap_returns_friendly_message(mock_client):
+    """若模型連續 4 次都修不好參數（超過 MAX_TOOL_USE_FAILED_RETRIES=3），直接回傳
+    友善訊息並停止重試，不再往下打 Groq——避免連續 tool_use_failed 燒光 TPD 額度
+    （production 429 事件的根因）。前 3 次重試行為不變（見
+    test_tool_use_failed_400_retries_and_recovers）。"""
     mock_client.chat.completions.create.side_effect = [
         _bad_request_error("tool_use_failed") for _ in range(agent_module.MAX_TOOL_LOOPS)
     ]
 
     out = agent_module.run_agent("本月市場走勢如何?", [])
 
-    assert out == "（推理超過最大迴圈次數，請換個問法重試）"
-    assert mock_client.chat.completions.create.call_count == agent_module.MAX_TOOL_LOOPS
+    assert out == "⚠️ 工具呼叫連續失敗，請換個問法再試。"
+    assert mock_client.chat.completions.create.call_count == agent_module.MAX_TOOL_USE_FAILED_RETRIES + 1
 
 
 def test_413_request_too_large_returns_friendly_message(mock_client):
@@ -247,9 +261,19 @@ def test_413_request_too_large_returns_friendly_message(mock_client):
 
 
 def test_429_rate_limit_returns_friendly_message(mock_client):
-    """429（請求數超過限制）同樣不應 crash，回傳友善訊息。"""
+    """429（請求數超過限制／每日額度用完）同樣不應 crash，回傳專屬友善訊息
+    （與 413 文案分開，避免誤導成資料量過大）。"""
     mock_client.chat.completions.create.side_effect = _rate_limit_error()
 
     out = agent_module.run_agent("test", [])
 
-    assert out == "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。"
+    assert out == "⏳ 今日 AI 額度已用完或請求過於頻繁，請稍後再試。"
+
+
+def test_other_api_status_error_returns_generic_friendly_message(mock_client):
+    """非 413/429 的 Groq API 錯誤（例如 500）回傳通用友善訊息，不與 413/429 文案混用。"""
+    mock_client.chat.completions.create.side_effect = _server_error()
+
+    out = agent_module.run_agent("test", [])
+
+    assert out == "⚠️ AI 服務暫時無法回應，請稍後再試。"

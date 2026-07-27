@@ -15,6 +15,14 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-27 — rate-limit-and-fast-path — evaluator — ✅ Pass（複驗，Round 2）
+- 連結：docs/qa-reports/rate-limit-and-fast-path.md
+- 備註：複驗 generator 對 Round 1 🔴 Critical 的修正（只動 `fast_path.py`／`test_fast_path.py`：新增 ticker 與「財報」鄰近性 regex + `_EXCLUDED_TICKERS` 排除清單 AI/IT/ETF/GDP/CPI/SEC/IPO/ESG/CNN/CEO/CFO/EPS/FED/PMI/CES）。`PYTHONPATH=src uv run pytest tests/ -v` 停用沙箱重跑 **398 passed**（與 generator 自報一致），無 regression。重跑 Round 1 全部誤攔 repro case（AI 相關企業財報公布日期、美股AI概念股財報日期、IT 產業財報公布日期、CNN/SEC/GDP 各例）皆確認回 None；4 個既有正例（META/AAPL/NVDA/TSLA）仍正常 HIT。另外自行構造邊角壓測：帶後綴 ticker（`BRK.B 財報日期`）、動詞前綴（`查一下TSM財報什麼時候`）皆正確 HIT；`EPS 財報日期怎麼看`（財務指標縮寫緊鄰財報）被排除清單擋下；`NOW 這檔股票財報日期`／`ON 半導體財報日期`（真實 ticker但非鄰近措辭）與 `TSLA 和 NOW 的財報日期`（多實體問句）皆安全回 None，未見誤答成錯誤公司的風險。🔴 0（Round 1 的 1 件已確認修正）；🟡 0；🟢 3（`try_fast_answer`/`extract_ticker` 重複計算、`_SYMBOL_RE` 缺自動化同步守門、單字母真實 ticker V/C/T/K 理論邊角風險極低不阻塞）；循環次數 2；未解 P0/P1 0/0。可合併。
+
+## 2026-07-27 — rate-limit-and-fast-path — evaluator — 🔴 Fail
+- 連結：docs/qa-reports/rate-limit-and-fast-path.md
+- 備註：無 contract，對照需求驗收（production 429 事件：9 次 tool_use_failed 重試燒 token、429 誤用 413 文案、模型用過去年份）。`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 381 passed/13 errors（`test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 394 passed（與 generator 自報一致）。APIStatusError 三分流、tool_use_failed >3 次停止重試（counter 跨輪累計、既有 BadRequestError 攔截順序不受影響）、playbook 開放式日期查詢規則、fast_path 與 playbook 注入順序（log 序列實測）、無循環 import、模板格式皆逐項核對通過。🔴 1：`fast_path.py` ticker 判斷未要求與「財報」關鍵字鄰近，導致「AI 相關企業的財報公布日期是什麼時候」「美股AI概念股財報日期」等泛用問句被誤判為查 C3.ai（ticker `AI`）單一公司，回傳看似精確實則答非所問的具體 EPS/營收數字，完全跳過 LLM 無法被上下文修正；另有 CNN/SEC/GDP 等機構縮寫較輕微的同類誤攔（回「查無資料」）。違反本次要求的「寧可漏接不誤攔」原則，且現有負例測試未覆蓋此類別。🟡 0；🟢 2（`extract_ticker` 於 log 重複計算、`_SYMBOL_RE` 與 `processor_handler.SYMBOL_RE` 手動同步缺自動化守門，皆 non-blocking）；循環次數 1；未解 P0 1（fast_path 誤攔）、P1 0。不可合併，需回 generator 修正 ticker 鄰近性判斷後複驗。
+
 ## 2026-07-27 — calendar-selection-and-log-fix — evaluator — ✅ Pass
 - 連結：docs/qa-reports/calendar-selection-and-log-fix.md
 - 備註：無 contract，對照需求驗收（`make chat` 實測發現的 3 個問題）。`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 364 passed/13 errors（`test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 377 passed（與 generator 自報一致）。獨立呼叫 `retrieve_scored` 與 production 用的 `_retrieve_playbook_hits()`（非只信 generator 數字）驗證兩個 query 各自穩定命中正確 section：「本週有什麼公司發布財報」僅注入行事曆 section（10.819，stock-news 3.489 未達 3.5 門檻）；「本週有什麼科技大廠公布財報」注入新 section（9.919）+ 行事曆 section（9.296），兩者指引無矛盾。逐行審查 `_select_rows` round-robin/排序 key 正確性（`revenueEstimate` None 分支先擋掉、`-() or 0` 無型別炸雷）、截斷放白名單前的整合不破壞 `test_earnings_calendar_upserts_thinned_data`、`scheduler_handler.py` 逐 symbol 查詢不受影響、httpx 靜音後無其他 INFO 洩漏路徑（`_http.py` 無自建 log、httpcore 只 DEBUG）。diff surgical，只動 3 個生產檔案 + 對應測試。🔴 0、🟡 0；🟢 2（排序 key 可讀性、round-robin 不均勻 date 分佈邊界未鎖測試，皆 non-blocking）；循環次數 1；未解 P0/P1 0/0。可合併。
