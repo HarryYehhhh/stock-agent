@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import pytest
 
-from agent.audit import dump
+from agent.audit import dump, judge
 from agent.knowledge.retrieval import parse_sections, retrieve_scored
 
 DATE = "2026-07-27"
@@ -166,15 +166,21 @@ def _put_news(aws, **overrides):
         "summary": "a summary",
     }
     item.update(overrides)
+    if item.get("published_at") is None:
+        # DynamoDB rejects an empty-string value for a GSI key attribute;
+        # dropping the key entirely models real legacy rows with no
+        # published_at at all.
+        item.pop("published_at", None)
     aws["ddb"].Table("test-news").put_item(Item=item)
 
 
 def test_dump_news_format_sections_and_sort(aws):
     # Two AAPL headlines on the same day (headline alpha tiebreak) plus one
-    # older AAPL headline (published_at descending), a MSFT headline (symbol
-    # alpha order after AAPL), an AI-category headline (symbol=None), and a
-    # market_summary row. Inserted out of order to prove sort isn't insertion
-    # order.
+    # older AAPL headline (symbol×date sections sorted date descending), a
+    # MSFT headline (symbol alpha order after AAPL), an AI-category headline
+    # (symbol=None), a headline with no published_at (falls into the "日期
+    # 未知" section, sorted last), and a market_summary row spanning two
+    # dates. Inserted out of order to prove sort isn't insertion order.
     _put_news(
         aws,
         headline="Zebra headline wins tiebreak last",
@@ -194,7 +200,14 @@ def test_dump_news_format_sections_and_sort(aws):
         headline="Older AAPL headline",
         published_at="2026-07-10T00:00:00+00:00",
         symbol="AAPL",
-        summary="Should sort after the 2026-07-25 pair.",
+        summary="Should sort into its own section, after 2026-07-25.",
+    )
+    _put_news(
+        aws,
+        headline="Undated AAPL headline",
+        published_at=None,  # omitted entirely -> falls into 日期未知 section
+        symbol="AAPL",
+        summary="No published_at -> 日期未知 section, sorted last.",
     )
     _put_news(
         aws,
@@ -221,6 +234,16 @@ def test_dump_news_format_sections_and_sort(aws):
             "created_at": "2026-07-27T00:00:00+00:00",
         }
     )
+    aws["ddb"].Table("test-news").put_item(
+        Item={
+            "headline": "SUMMARY#2026-07-26#1#def456",
+            "bucket": "market_summary",
+            "summary": "昨日大盤摘要。",
+            "summary_date": "2026-07-26",
+            "days_back": 1,
+            "created_at": "2026-07-26T00:00:00+00:00",
+        }
+    )
 
     assert _run_dump(table="news") == 0
 
@@ -231,36 +254,88 @@ def test_dump_news_format_sections_and_sort(aws):
     head = text.split("## ", 1)[0]
     assert "產生時間" in head
     assert "來源表：test-news" in head
-    assert "一般新聞筆數：5" in head
-    assert "市場摘要筆數：1" in head
+    assert "一般新聞筆數：6" in head
+    assert "市場摘要筆數：2" in head
     assert "近 ~14 天" in head
     assert "近 ~2 天" in head
 
     sections = parse_sections(text, "news")
     headings = [s.heading for s in sections]
-    # symbol alphabetical order; AI + market_summary are separate sections.
-    assert headings == ["AAPL 新聞", "MSFT 新聞", "AI 產業新聞", "市場摘要"]
+    # symbol alphabetical order, date descending within symbol
+    # (日期未知 sorts last); AI + market_summary sections follow, date desc.
+    assert headings == [
+        "AAPL 新聞 2026-07-25",
+        "AAPL 新聞 2026-07-10",
+        "AAPL 新聞 日期未知",
+        "MSFT 新聞 2026-07-25",
+        "AI 產業新聞 2026-07-24",
+        "市場摘要 2026-07-27",
+        "市場摘要 2026-07-26",
+    ]
 
-    aapl = sections[0]
-    # published_at descending: 2026-07-25 pair before 2026-07-10.
-    idx_jul25_apple = aapl.content.index("Apple headline wins tiebreak first")
-    idx_jul25_zebra = aapl.content.index("Zebra headline wins tiebreak last")
-    idx_jul10 = aapl.content.index("Older AAPL headline")
-    assert idx_jul25_apple < idx_jul25_zebra < idx_jul10
+    aapl_jul25 = sections[0]
     # Same-day tiebreak is headline alphabetical: "Apple" before "Zebra".
-    assert "English summary for apple" in aapl.content
-    assert "English summary for zebra" in aapl.content
+    idx_apple = aapl_jul25.content.index("Apple headline wins tiebreak first")
+    idx_zebra = aapl_jul25.content.index("Zebra headline wins tiebreak last")
+    assert idx_apple < idx_zebra
+    assert "English summary for apple" in aapl_jul25.content
+    assert "English summary for zebra" in aapl_jul25.content
 
-    msft = sections[1]
+    aapl_jul10 = sections[1]
+    assert "Older AAPL headline" in aapl_jul10.content
+
+    aapl_unknown = sections[2]
+    assert "Undated AAPL headline" in aapl_unknown.content
+
+    msft = sections[3]
     assert "MSFT cloud news" in msft.content
 
-    ai_section = sections[2]
+    ai_section = sections[4]
     assert "AI chip demand surges" in ai_section.content
 
-    summary_section = sections[3]
-    assert "2026-07-27" in summary_section.content
-    assert "近 1 天" in summary_section.content
-    assert "今日大盤摘要，科技股領漲。" in summary_section.content
+    summary_jul27 = sections[5]
+    assert "近 1 天" in summary_jul27.content
+    assert "今日大盤摘要，科技股領漲。" in summary_jul27.content
+
+    summary_jul26 = sections[6]
+    assert "昨日大盤摘要。" in summary_jul26.content
+
+
+def test_dump_news_summary_truncated_at_150_chars(aws):
+    long_summary = "x" * 200  # exceeds _NEWS_SUMMARY_CHARS (150)
+    short_summary = "y" * 150  # exactly at the limit, left untouched
+    _put_news(aws, headline="Long summary headline", symbol="AAPL", summary=long_summary)
+    _put_news(aws, headline="Short summary headline", symbol="AAPL", summary=short_summary)
+
+    assert _run_dump(table="news") == 0
+
+    text = (dump.SNAPSHOTS_DIR / DATE / "news.md").read_text(encoding="utf-8")
+    assert "x" * 150 + "…（截斷）" in text
+    assert "x" * 151 not in text
+    assert short_summary in text
+    assert short_summary + "…（截斷）" not in text
+
+
+def test_dump_news_section_stays_within_max_section_chars_at_peak_volume(aws):
+    """核心目標的單元佐證: a peak single symbol×day (8 headlines, matching the
+    spec's estimated peak news volume) must fit within MAX_SECTION_CHARS --
+    i.e. the section is small enough that judge's `_ask_judge` never
+    truncates it (full evidence reaches the prompt)."""
+    for i in range(8):
+        _put_news(
+            aws,
+            headline=f"AAPL headline {i:02d} product update",
+            published_at="2026-07-25T00:00:00+00:00",
+            symbol="AAPL",
+            summary="A" * 150,  # worst case: every summary hits the truncation cap
+        )
+
+    assert _run_dump(table="news") == 0
+
+    text = (dump.SNAPSHOTS_DIR / DATE / "news.md").read_text(encoding="utf-8")
+    sections = parse_sections(text, "news")
+    aapl_section = next(s for s in sections if s.heading == "AAPL 新聞 2026-07-25")
+    assert len(aapl_section.content) <= judge.MAX_SECTION_CHARS
 
 
 def test_dump_news_unknown_bucket_ignored(aws):
@@ -292,8 +367,8 @@ def test_dump_news_market_summary_not_mixed_into_general_news(aws):
 
     text = (dump.SNAPSHOTS_DIR / DATE / "news.md").read_text(encoding="utf-8")
     sections = parse_sections(text, "news")
-    aapl_section = next(s for s in sections if s.heading == "AAPL 新聞")
-    summary_section = next(s for s in sections if s.heading == "市場摘要")
+    aapl_section = next(s for s in sections if s.heading.startswith("AAPL 新聞"))
+    summary_section = next(s for s in sections if s.heading.startswith("市場摘要"))
     assert "市場摘要獨立內容" not in aapl_section.content
     assert "AAPL headline" not in summary_section.content
 
@@ -323,7 +398,7 @@ def test_dump_news_snapshot_is_retrievable(aws):
         "NVDA 最近有什麼新聞", top_k=3, source_dir=dump.SNAPSHOTS_DIR / DATE
     )
     assert hits
-    assert hits[0][0].source == "news#NVDA 新聞"
+    assert hits[0][0].source == "news#NVDA 新聞 2026-07-20"
 
 
 def test_dump_mixed_index_does_not_dilute_news_vs_earnings(aws):
@@ -351,10 +426,10 @@ def test_dump_mixed_index_does_not_dilute_news_vs_earnings(aws):
 
     source_dir = dump.SNAPSHOTS_DIR / DATE
 
-    # 正: 新聞型 query 首命中為 news#。
+    # 正: 新聞型 query 首命中為 news#（新粒度：symbol×日期）。
     news_hits = retrieve_scored("AAPL 最近有什麼新聞", top_k=3, source_dir=source_dir)
     assert news_hits
-    assert news_hits[0][0].source == "news#AAPL 新聞"
+    assert news_hits[0][0].source == "news#AAPL 新聞 2026-07-20"
 
     # 反: 財報型 query（EPS / 財報日期）首命中為 earnings#。
     earnings_hits = retrieve_scored(

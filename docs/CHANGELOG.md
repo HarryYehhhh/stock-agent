@@ -15,6 +15,15 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-27 — news-section-granularity — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/news-section-granularity.md
+- 驗證：Unit 430/430 passed；Integration not required；E2E not required；External Smoke pass（真實 DynamoDB NewsTable + conversations 讀取、真實檢索層驗證）（blocking: false）
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 430/430 passed 無 regression（sandbox 內 socket bind 被擋、停用沙箱重跑全綠，與本次改動無關）。Contract A/B/C 全部 deliverable ✅，`retrieval.py`/judge 核心/線上 runtime 零改動確認。獨立複算真實快照字元分佈（不只信 generator 數字）：P50=1062/P95=4565/max=5373（46 節），與 generator 自報一致；7/21 AAPL 回歸案例改用讀碼 + 真實 DynamoDB conversations 表 + 真實檢索層驗證（不耗 Groq 共用額度）：首命中 `news#AAPL 新聞 2026-07-20`（1494 字元、未截斷），5 則引用標題逐字核對全數在節內，證實 grounded 判定成立；G3 NVDA 短查詢波動獨立複驗屬實，且確認對 judge 實際查詢模式（Q+A 全文）無影響。🔴 0；🟡 1（真實 P95=4565 超過契約授權上限 2500，7/46=15% 節仍會被截斷，集中在財報週多檔大型股同日報財報——非 P99 罕見尾端，屬每季會重演的規律模式；caveat 已誠實反映，建議 follow-up 重算 token 預算提高上限或啟動方案 B）；🟢 1（Groq usage token 未落檔佐證，僅獨立試算確認安全）；循環次數 1；未解 P0/P1 0/0。可合併。
+
+## 2026-07-27 — news-section-granularity — planner — spec + contract + ADR 完成
+- 連結：docs/specs/news-section-granularity.md, docs/contracts/news-section-granularity.md, docs/decisions/0012-news-section-date-granularity.md
+- 備註：修復 news-haystack QA 🟡——`_dump_news` 每 symbol 單一大節（實測 `## AAPL 新聞` 16,135 字元/65 則）被 judge `MAX_SECTION_CHARS=1000` 截成 ~4 則、較舊但仍在 14 天窗口內的證據沒進 prompt，致 7/21「最近有什麼AAPL新聞」誤判 ungrounded。使用者定案方案 A（切細）。**字元分佈推算**（無 Bash/無現成 snapshot，用 QA report 真實錨點 248 字元/則推算，generator 須以真實 dump 複核）：切成 symbol×日期後 AAPL 尖峰日 6-10 則 ≈1,490-2,480 字元（現 200 摘要），**只切細仍超 1000**、AI 3.5k 單節升上限到 2000 仍超——故**組合三手段**：(1) section 切 symbol×日期（`## <SYMBOL> 新聞 <YYYY-MM-DD>`，AI/market_summary 同切日期，粒度一致避免 AI 大節重演 bug）；(2) `_NEWS_SUMMARY_CHARS` 200→150（每則 ≈248→~198）；(3) `MAX_SECTION_CHARS` 1000→**2000**。**token 預算核算**：top_k=3×2000 字元 ≈1.5-2k token + 問答 ~940 + system ~200 ≈ **~3,400 token/請求 ≈ TPM 12000 的 ~28%**，未逼近（上限可微調 ≤2500）。目標：切細後單節 **P95 ≤ 取證上限**、命中節完整進 prompt。judge 檢索/配對/短路/prompt 結構/`_extract_json`/top_k 預設全不動（唯 `MAX_SECTION_CHARS` 數值 + `_write_report` caveat 文字）。回歸要求：混索引不稀釋正反例不得回歸（既有對 `news#AAPL 新聞` 舊 heading 斷言的測試須更新為新粒度 source）；7/21 AAPL 誤判案例在切細後 judge 應看得到證據（2026-07-20 若仍在窗口內）。ADR-0012 部分取代 ADR-0011 D3/D4、延伸 0010，並收錄 QA 🟡 #2 真實規模稀釋數據。Out of scope：方案 B（節內二段取證）、scheduler 新聞預篩選、retrieval.py BM25 核心。DoD：pytest 全綠 + 真實 dump 算 P50/P95/max 佐證 P95≤上限 + 真實 judge 複核回歸案例 + token 預算複核。下一步交棒 generator。
+
 ## 2026-07-27 — news-haystack — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/news-haystack.md
 - 驗證：Unit 428/428 passed；Integration not required；E2E not required；External Smoke pass（真實 DynamoDB NewsTable dump + judge 真跑 Groq）（blocking: false）
