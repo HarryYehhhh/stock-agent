@@ -49,6 +49,40 @@ EARNINGS_TOOL = {
 }
 
 
+def _select_rows(items: list[dict], limit: int) -> list[dict]:
+    """Thin `items` down to `limit` rows with date coverage prioritized over
+    strict truncation: group by date, rank each date's rows by revenueEstimate
+    descending (missing/None last, as a proxy for company size), then
+    round-robin across dates (earliest date first) so every date in range
+    keeps a representative instead of the whole budget going to whichever
+    date happens to sort first alphabetically by symbol."""
+    if len(items) <= limit:
+        return items
+
+    groups: dict[str | None, list[dict]] = {}
+    for it in items:
+        groups.setdefault(it.get("date"), []).append(it)
+    for rows in groups.values():
+        rows.sort(key=lambda it: (it.get("revenueEstimate") is None, -(it.get("revenueEstimate") or 0)))
+    dates_in_order = sorted(groups, key=lambda d: (d is None, d))
+
+    selected: list[dict] = []
+    round_idx = 0
+    while len(selected) < limit:
+        added_any = False
+        for date in dates_in_order:
+            rows = groups[date]
+            if round_idx < len(rows):
+                selected.append(rows[round_idx])
+                added_any = True
+                if len(selected) == limit:
+                    break
+        if not added_any:
+            break
+        round_idx += 1
+    return selected
+
+
 def get_earnings_calendar(
     date_from: str, date_to: str, symbol: str | None = None
 ) -> list[dict]:
@@ -61,9 +95,10 @@ def get_earnings_calendar(
     # Defensive client-side filter in case Finnhub ignores the symbol param on free tier
     if symbol:
         items = [it for it in items if (it.get("symbol") or "").upper() == symbol.upper()]
+    items = _select_rows(items, EARNINGS_ROW_LIMIT)
     items = [
         {k: it[k] for k in EARNINGS_FIELDS if k in it}
-        for it in items[:EARNINGS_ROW_LIMIT]
+        for it in items
     ]
     try:
         get_backend().upsert_earnings_calendar(items)

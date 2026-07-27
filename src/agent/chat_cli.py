@@ -20,6 +20,9 @@ EXIT_COMMANDS = {"exit", "quit"}
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    # httpx 的 request log 在 INFO 級會印出完整 URL（含 Finnhub token 查詢參數），
+    # 壓到 WARNING 避免在終端機洩漏 API key。
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     print("美股財報 AI 助理（本地 CLI）。輸入 exit 或 quit 離開。")
     history: list[dict] = []
 

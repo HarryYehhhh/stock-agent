@@ -238,6 +238,16 @@ def test_earnings_calendar_query_top1_is_earnings_calendar_section():
     assert top_section.source == "earnings#財報行事曆時間查詢"
 
 
+def test_tech_giants_earnings_query_top2_hits_tech_giants_section():
+    """本週有什麼科技大廠公布財報 must route to the tech-giants playbook
+    section (per-symbol get_earnings_calendar), not just the generic
+    calendar section which gets drowned out by small-cap symbols."""
+    results = retrieve_scored("本週有什麼科技大廠公布財報", top_k=2, source_dir=retrieval.PLAYBOOKS_DIR)
+    assert results, "expected at least one hit"
+    sources = {section.source for section, _ in results}
+    assert "earnings#科技大廠與大型科技股財報查詢" in sources
+
+
 def test_market_trends_query_hits_market_trends_playbook():
     results = retrieve_scored("今天大盤怎樣", top_k=2, source_dir=retrieval.PLAYBOOKS_DIR)
     assert results

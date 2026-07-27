@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-27 — calendar-selection-and-log-fix — evaluator — ✅ Pass
+- 連結：docs/qa-reports/calendar-selection-and-log-fix.md
+- 備註：無 contract，對照需求驗收（`make chat` 實測發現的 3 個問題）。`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 364 passed/13 errors（`test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 377 passed（與 generator 自報一致）。獨立呼叫 `retrieve_scored` 與 production 用的 `_retrieve_playbook_hits()`（非只信 generator 數字）驗證兩個 query 各自穩定命中正確 section：「本週有什麼公司發布財報」僅注入行事曆 section（10.819，stock-news 3.489 未達 3.5 門檻）；「本週有什麼科技大廠公布財報」注入新 section（9.919）+ 行事曆 section（9.296），兩者指引無矛盾。逐行審查 `_select_rows` round-robin/排序 key 正確性（`revenueEstimate` None 分支先擋掉、`-() or 0` 無型別炸雷）、截斷放白名單前的整合不破壞 `test_earnings_calendar_upserts_thinned_data`、`scheduler_handler.py` 逐 symbol 查詢不受影響、httpx 靜音後無其他 INFO 洩漏路徑（`_http.py` 無自建 log、httpcore 只 DEBUG）。diff surgical，只動 3 個生產檔案 + 對應測試。🔴 0、🟡 0；🟢 2（排序 key 可讀性、round-robin 不均勻 date 分佈邊界未鎖測試，皆 non-blocking）；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-27 — token-budget-hardening — evaluator — ✅ Pass
 - 連結：docs/qa-reports/token-budget-hardening.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 361 passed/13 errors（`test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 374 passed（與 generator 自報一致）。獨立讀碼確認 except 順序正確（`BadRequestError` 為 `APIStatusError` 子類、置於前面，非 tool_use_failed 的 400 在 except 內 re-raise 不會被後續 except APIStatusError 誤攔；413 無專屬子類走 APIStatusError、429 走 RateLimitError，兩者皆非 BadRequestError）；獨立讀 `db/backend.py` 兩個 backend 的 `upsert_earnings_calendar` 確認只用 symbol/date/hour/epsEstimate/revenueEstimate 5 欄，`scheduler_handler.sync_earnings` 只靠 side effect 不用回傳值，瘦身資料同時用於 upsert 與回傳的設計決定成立；白名單含 date/hour/epsEstimate/revenueEstimate 涵蓋 playbook `earnings.md` 回覆要求；413/429 測試用真實 httpx.Response 建構的 groq SDK 例外物件、非過度 mock。🔴 0、🟡 0；🟢 2（429 友善文案可依 status_code 細分、非阻塞；已讀欄位保留註解良好）；循環次數 1；未解 P0/P1 0/0。可合併。
