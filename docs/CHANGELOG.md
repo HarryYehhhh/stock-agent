@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-28 — reduce-agent-token — evaluator — ✅ Pass
+- 連結：docs/qa-reports/reduce-agent-token.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 434/434 passed（沙盒 socket bind 被擋、停用沙盒重跑全綠，與本次改動無關）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。`HISTORY_LIMIT` 20→10、新增 `HISTORY_CHAR_BUDGET=6000` 字元預算制（`_apply_char_budget` 從最舊整則丟棄、單則超長仍保留）、SYSTEM_INSTRUCTION 加一句引導同一輪叫齊工具，三處改動共 50 行，逐行對應需求；`processor_handler.py` 的 `get_history(chat_id, limit=2)` fast path 確認未受影響。可合併。
+
 ## 2026-07-27 — news-section-granularity — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/news-section-granularity.md
 - 驗證：Unit 430/430 passed；Integration not required；E2E not required；External Smoke pass（真實 DynamoDB NewsTable + conversations 讀取、真實檢索層驗證）（blocking: false）
