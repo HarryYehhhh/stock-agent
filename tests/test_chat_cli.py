@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import MagicMock
 
 import pytest
@@ -26,6 +27,18 @@ def _feed_input(monkeypatch, lines):
             raise EOFError
 
     monkeypatch.setattr("builtins.input", _fake_input)
+
+
+def test_main_configures_info_level_logging(monkeypatch, fake_run_agent):
+    """agent.py 的 INFO log（tool 呼叫、playbook 注入、groq usage）本地 CLI 除錯要看得到。"""
+    mock_basic_config = MagicMock()
+    monkeypatch.setattr(chat_cli.logging, "basicConfig", mock_basic_config)
+    _feed_input(monkeypatch, ["exit"])
+
+    chat_cli.main()
+
+    mock_basic_config.assert_called_once()
+    assert mock_basic_config.call_args.kwargs["level"] == logging.INFO
 
 
 def test_exit_command_stops_loop_without_calling_agent(monkeypatch, fake_run_agent):

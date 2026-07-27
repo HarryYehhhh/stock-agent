@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-27 — token-budget-hardening — evaluator — ✅ Pass
+- 連結：docs/qa-reports/token-budget-hardening.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 361 passed/13 errors（`test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 374 passed（與 generator 自報一致）。獨立讀碼確認 except 順序正確（`BadRequestError` 為 `APIStatusError` 子類、置於前面，非 tool_use_failed 的 400 在 except 內 re-raise 不會被後續 except APIStatusError 誤攔；413 無專屬子類走 APIStatusError、429 走 RateLimitError，兩者皆非 BadRequestError）；獨立讀 `db/backend.py` 兩個 backend 的 `upsert_earnings_calendar` 確認只用 symbol/date/hour/epsEstimate/revenueEstimate 5 欄，`scheduler_handler.sync_earnings` 只靠 side effect 不用回傳值，瘦身資料同時用於 upsert 與回傳的設計決定成立；白名單含 date/hour/epsEstimate/revenueEstimate 涵蓋 playbook `earnings.md` 回覆要求；413/429 測試用真實 httpx.Response 建構的 groq SDK 例外物件、非過度 mock。🔴 0、🟡 0；🟢 2（429 友善文案可依 status_code 細分、非阻塞；已讀欄位保留註解良好）；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-27 — playbook-grounding — evaluator — ✅ Pass
 - 連結：docs/qa-reports/playbook-grounding.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙箱內 355 passed/13 errors（既有 `test_local_integration.py` socket bind 沙箱限制，非回歸）、停用沙箱重跑 368 passed（與 generator 自報一致）。逐行核對 `git diff src/agent/prompts.py` 確認 S3/S4/S7/S10/S11/S13–S20 共 13 條 MOVE 全數移除且語意完整落地三份 playbook、S1/S2/S5/S6/S8/S9/S12/S21/S22–S25 共 10 條 STAY 逐字未動；`retrieval.py` 索引來源參數化、`knowledge/playbooks/` 與 `knowledge/*.md` 雙索引以非遞迴 glob 天然隔離，`search_knowledge_base` 行為/預設索引/回傳結構不變。獨立重跑 `python -m agent.knowledge.debug`（非引用 generator 自報數字）驗證 `MIN_SCORE=3.5` 校準準確：「本週有什麼公司發布財報」top_k=2+門檻後僅 `earnings#財報行事曆時間查詢`（10.323）注入、`stock-news`（2.679）被過濾；負例「AAPL 最近新聞」僅 `stock-news`（3.595）注入、`earnings` 行事曆（0.879）未誤命中。另寫獨立腳本（繞開需要 `GROQ_API_KEY`/網路的 `chat_cli` 沙箱限制、直接呼叫同一 `run_agent()` 入口 + mock Groq client）驗證注入位置（system 之後、history 之前）、`playbook_injection`／`_run_tool` 成功 log 皆如契約所述、args 未見 token 洩漏。🔴 0、🟡 0；🟢 2（playbook 內 section 內部小節輕微語意重複、一則測試用手動 try/finally 而非 monkeypatch fixture，皆 non-blocking）；循環次數 1；未解 P0/P1 0/0。可合併。

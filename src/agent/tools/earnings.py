@@ -10,6 +10,25 @@ from agent.tools._http import client
 
 log = logging.getLogger(__name__)
 
+# Field whitelist for /calendar/earnings rows, kept minimal to control token
+# usage in the LLM tool-result payload. symbol/date/hour/epsEstimate/
+# revenueEstimate are also the only fields the DB backends persist
+# (see db/backend.py upsert_earnings_calendar); epsActual/revenueActual/
+# quarter/year are kept for LLM-facing queries about past earnings but are
+# not currently read by any cache/scheduler consumer.
+EARNINGS_FIELDS = (
+    "symbol",
+    "date",
+    "hour",
+    "epsEstimate",
+    "epsActual",
+    "revenueEstimate",
+    "revenueActual",
+    "quarter",
+    "year",
+)
+EARNINGS_ROW_LIMIT = 50
+
 EARNINGS_TOOL = {
     "name": "get_earnings_calendar",
     "description": (
@@ -42,7 +61,10 @@ def get_earnings_calendar(
     # Defensive client-side filter in case Finnhub ignores the symbol param on free tier
     if symbol:
         items = [it for it in items if (it.get("symbol") or "").upper() == symbol.upper()]
-    items = items[:100]
+    items = [
+        {k: it[k] for k in EARNINGS_FIELDS if k in it}
+        for it in items[:EARNINGS_ROW_LIMIT]
+    ]
     try:
         get_backend().upsert_earnings_calendar(items)
     except Exception as e:

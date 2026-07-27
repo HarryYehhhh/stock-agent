@@ -10,6 +10,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from agent.agent import run_agent
 from agent.db.conversations import HISTORY_LIMIT
 
@@ -17,6 +19,7 @@ EXIT_COMMANDS = {"exit", "quit"}
 
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     print("美股財報 AI 助理（本地 CLI）。輸入 exit 或 quit 離開。")
     history: list[dict] = []
 

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import httpx
 import pytest
-from groq import BadRequestError
+from groq import APIStatusError, BadRequestError, RateLimitError
 
 from agent import agent as agent_module
 
@@ -30,6 +30,40 @@ def _bad_request_error(code: str, message: str = "tool call validation failed") 
         json={"error": {"message": message, "type": "invalid_request_error", "code": code}},
     )
     return BadRequestError(f"Error code: 400 - {resp.json()}", response=resp, body=resp.json())
+
+
+def _request_too_large_error() -> APIStatusError:
+    """Groq 413 (request entity too large) has no dedicated exception subclass;
+    the SDK raises the base APIStatusError."""
+    req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    resp = httpx.Response(
+        413,
+        request=req,
+        json={
+            "error": {
+                "message": "Request too large for model on tokens per minute (TPM)",
+                "type": "tokens",
+                "code": "rate_limit_exceeded",
+            }
+        },
+    )
+    return APIStatusError(f"Error code: 413 - {resp.json()}", response=resp, body=resp.json())
+
+
+def _rate_limit_error() -> RateLimitError:
+    req = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    resp = httpx.Response(
+        429,
+        request=req,
+        json={
+            "error": {
+                "message": "Rate limit reached for requests",
+                "type": "requests",
+                "code": "rate_limit_exceeded",
+            }
+        },
+    )
+    return RateLimitError(f"Error code: 429 - {resp.json()}", response=resp, body=resp.json())
 
 
 def _tool_response(tool_name: str, tool_args: dict):
@@ -200,3 +234,22 @@ def test_tool_use_failed_400_exhausts_max_loops(mock_client):
 
     assert out == "（推理超過最大迴圈次數，請換個問法重試）"
     assert mock_client.chat.completions.create.call_count == agent_module.MAX_TOOL_LOOPS
+
+
+def test_413_request_too_large_returns_friendly_message(mock_client):
+    """單次請求 token 數超過 Groq TPM 上限（413 rate_limit_exceeded）不應 crash，
+    改回友善訊息。"""
+    mock_client.chat.completions.create.side_effect = _request_too_large_error()
+
+    out = agent_module.run_agent("本週有什麼科技大廠公布財報", [])
+
+    assert out == "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。"
+
+
+def test_429_rate_limit_returns_friendly_message(mock_client):
+    """429（請求數超過限制）同樣不應 crash，回傳友善訊息。"""
+    mock_client.chat.completions.create.side_effect = _rate_limit_error()
+
+    out = agent_module.run_agent("test", [])
+
+    assert out == "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。"

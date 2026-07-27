@@ -80,6 +80,72 @@ def test_earnings_filters_client_side_when_finnhub_returns_all(mock_http):
     assert len(out) == 2
 
 
+def test_earnings_calendar_strips_non_whitelisted_fields(mock_http, monkeypatch):
+    fake_backend = MagicMock()
+    monkeypatch.setattr(earnings, "get_backend", lambda: fake_backend)
+    raw_row = {
+        "symbol": "AAPL",
+        "date": "2026-07-23",
+        "hour": "amc",
+        "epsEstimate": 1.42,
+        "epsActual": None,
+        "revenueEstimate": 82000000000,
+        "revenueActual": None,
+        "quarter": 3,
+        "year": 2026,
+        # Fields Finnhub returns that we don't want to forward to the LLM:
+        "epsEstimateHigh": 1.6,
+        "epsEstimateLow": 1.3,
+        "epsEstimateAnalystsCount": 20,
+        "revenueEstimateHigh": 90000000000,
+        "revenueEstimateLow": 78000000000,
+        "revenueEstimateAnalystsCount": 15,
+    }
+    mock_http.get.return_value = _resp({"earningsCalendar": [raw_row]})
+
+    out = earnings.get_earnings_calendar("2026-07-20", "2026-07-24")
+
+    assert len(out) == 1
+    assert set(out[0].keys()) == set(earnings.EARNINGS_FIELDS)
+    assert out[0]["symbol"] == "AAPL"
+    assert out[0]["epsEstimate"] == 1.42
+
+
+def test_earnings_calendar_caps_at_50_rows(mock_http, monkeypatch):
+    fake_backend = MagicMock()
+    monkeypatch.setattr(earnings, "get_backend", lambda: fake_backend)
+    rows = [{"symbol": f"SYM{i}", "date": "2026-07-23"} for i in range(60)]
+    mock_http.get.return_value = _resp({"earningsCalendar": rows})
+
+    out = earnings.get_earnings_calendar("2026-07-20", "2026-07-24")
+
+    assert len(out) == earnings.EARNINGS_ROW_LIMIT == 50
+
+
+def test_earnings_calendar_upserts_thinned_data(mock_http, monkeypatch):
+    """Backend upsert only reads symbol/date/hour/epsEstimate/revenueEstimate
+    (see db/backend.py upsert_earnings_calendar), a subset of EARNINGS_FIELDS,
+    so it's safe to reuse the already-thinned rows instead of upserting the
+    raw Finnhub payload."""
+    fake_backend = MagicMock()
+    monkeypatch.setattr(earnings, "get_backend", lambda: fake_backend)
+    raw_row = {
+        "symbol": "AAPL",
+        "date": "2026-07-23",
+        "hour": "amc",
+        "epsEstimate": 1.42,
+        "revenueEstimate": 82000000000,
+        "surprisePercent": 5.2,  # not whitelisted, not needed by backend
+    }
+    mock_http.get.return_value = _resp({"earningsCalendar": [raw_row]})
+
+    out = earnings.get_earnings_calendar("2026-07-20", "2026-07-24")
+
+    fake_backend.upsert_earnings_calendar.assert_called_once_with(out)
+    upserted = fake_backend.upsert_earnings_calendar.call_args[0][0]
+    assert "surprisePercent" not in upserted[0]
+
+
 def test_get_company_industry_calls_profile2(mock_http):
     mock_http.get.return_value = _resp({"finnhubIndustry": "Technology"})
     out = earnings.get_company_industry("AAPL")
