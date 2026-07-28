@@ -15,6 +15,18 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-29 — request-trace-and-corrections-sprint — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/request-trace-and-corrections-sprint.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 518/531（13 個 `test_local_integration.py` socket bind PermissionError 為既有沙盒現象，與本次改動無關）；停用沙盒重跑 531/531 passed；🔴 0、🟡 1、循環次數 1、未解 P0/P1 0/0。Trace（1A–1D）與 Corrections（2A–2D）兩 Feature 的 P1 deliverable 全數打勾；`sam validate --lint` 通過；`agent.py` 儀表化 diff 逐行核對零侵入（`_run_tool` 契約、送 Groq messages、所有回覆字串逐字不變）；隔離不變式測試以 spy wrap 真實 backend 方法在一次完整 `run_agent()`（playbook 命中+工具呼叫）中驗證 corrections 讀取方法零呼叫；DoD 要求的 chat_cli/local_server 實測以等效腳本（mock Groq、真實 `run_agent()`/`processor_handler` 路徑）跑過並用正式 CLI 查表得證。唯一 🟡：`test_trace_instrumentation.py` 缺一個「completed+工具呼叫+命中 playbook」組合測試斷言 `playbook_hits` 內容（功能已手動驗證正確，純測試覆蓋缺口，不阻擋合併）。可合併。
+
+## 2026-07-29 — request-trace-and-corrections — planner — spec + contract + ADR 完成
+- 連結：docs/specs/request-trace-and-corrections.md、docs/contracts/request-trace-and-corrections-sprint.md、docs/decisions/0013-request-trace-persistence.md、docs/decisions/0014-corrections-controlled-feedback-loop.md
+- 備註：一 sprint 兩功能，contract 內切 P1/P2（兩 Feature 的 P1 皆為最小可用、必交付）。
+  - Feature 1（trace）決策：落地走 StorageBackend（DynamoDB + SQLite），非 CloudWatch-only（ADR-0013）——關鍵是使用者 token 分析主戰場是本地 chat_cli e2e，CloudWatch 抓不到本地 run；trace all + chat_id sentinel `"__none__"`；零侵入、零額外 LLM token、save_trace 失敗不影響回覆；`python -m agent.trace list` 查表 CLI。
+  - Feature 2（corrections）決策：顯式 `/correct` 偵測（不猜、不上 LLM）→ corrections 表 `pending` 隔離 → 人工 approve → 維護者 `export` 貼進 `knowledge/corrections.md` 經 PR/deploy 才生效（ADR-0014）。注入複用既有 `search_knowledge_base`（`knowledge/*.md`），零 runtime 新注入碼；`run_agent` 注入層不讀 corrections 表（測試釘死不變式）。四道人工關卡結構性杜絕自動注入，回應歷史污染事件教訓。
+  - 取捨已寫入 spec「假設與取捨」段（A1–A5），背景 sprint 未停下等使用者。
+  - 後續（Out of scope）：trace 儀表板/告警、LLM 自動偵測糾正、approved 自動寫 md/開 PR、corrections 走 playbook pre-injection。
+
 ## 2026-07-28 — news-source-credibility — evaluator — ✅ Pass
 - 連結：docs/qa-reports/news-source-credibility.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 477/490（13 個 `test_local_integration.py` socket bind PermissionError 與本次改動無關）；停用沙盒重跑 490/490 passed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。news 表新增 `source`/`high_credibility`，Big7 與 AI 兩條入庫線對稱覆蓋；白名單完全比對（casefold）測過 `Bloomberg Law`/`via Bloomberg` 等 substring 陷阱皆正確排除；SQLite 遷移比照既有 `earnings_calendar.updated_at` 模式且有專門測試驗證舊資料不丟；DynamoDB 端 `source` 比照 `symbol`/`url` 的 None 不寫入模式、`high_credibility` 固定寫布林，兩端一致；`select_news`/摘要邏輯零改動。可合併。

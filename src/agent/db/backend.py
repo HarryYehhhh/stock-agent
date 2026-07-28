@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import time
+import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
 from functools import lru_cache
@@ -20,12 +21,14 @@ from agent.config import (
     aws_region,
     company_summaries_table,
     conversations_table,
+    corrections_table,
     earnings_calendar_table,
     earnings_notifications_table,
     news_table,
     processed_updates_table,
     rate_limits_table,
     subscribers_table,
+    traces_table,
     watchlist_table,
 )
 
@@ -36,6 +39,7 @@ EARNINGS_NOTIFICATIONS_TTL_SECONDS = 30 * 24 * 3600
 COMPANY_SUMMARIES_TTL_SECONDS = 30 * 24 * 3600
 NEWS_TTL_SECONDS = 14 * 24 * 3600
 MARKET_SUMMARY_TTL_SECONDS = 2 * 24 * 3600
+CORRECTIONS_TTL_SECONDS = 90 * 24 * 3600
 DEFAULT_LOCAL_STORE_PATH = ".local/earnings-agent.sqlite3"
 
 
@@ -139,6 +143,24 @@ class StorageBackend(Protocol):
     def get_cached_market_summary(
         self, summary_date: str, days_back: int, news_ids_hash: str
     ) -> dict | None: ...
+
+    def save_trace(self, trace: dict) -> None: ...
+
+    def list_traces(
+        self, chat_id: str | None = None, since: str | None = None, limit: int = 50
+    ) -> list[dict]: ...
+
+    def save_correction(
+        self,
+        chat_id: str,
+        correction_text: str,
+        context_question: str | None,
+        context_answer: str | None,
+    ) -> str: ...
+
+    def list_corrections(self, status: str | None = None, limit: int = 50) -> list[dict]: ...
+
+    def update_correction_status(self, correction_id: str, status: str) -> bool: ...
 
 
 @lru_cache(maxsize=1)
@@ -330,6 +352,53 @@ class LocalSQLiteBackend:
                     PRIMARY KEY (chat_id, window_key)
                 )
                 """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS traces (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT NOT NULL,
+                    ts TEXT NOT NULL,
+                    trace_id TEXT NOT NULL,
+                    user_message TEXT NOT NULL,
+                    fast_path INTEGER NOT NULL,
+                    playbook_hits TEXT NOT NULL,
+                    history_msg_count INTEGER NOT NULL,
+                    history_char_count INTEGER NOT NULL,
+                    tools TEXT NOT NULL,
+                    iterations INTEGER NOT NULL,
+                    usage TEXT NOT NULL,
+                    usage_by_iteration TEXT NOT NULL,
+                    total_ms INTEGER NOT NULL,
+                    outcome TEXT NOT NULL,
+                    reply_char_count INTEGER NOT NULL,
+                    model TEXT,
+                    ttl INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_traces_chat_id ON traces (chat_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_traces_ts ON traces (ts)"
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS corrections (
+                    correction_id TEXT PRIMARY KEY,
+                    chat_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    correction_text TEXT NOT NULL,
+                    context_question TEXT,
+                    context_answer TEXT,
+                    status TEXT NOT NULL,
+                    ttl INTEGER NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_corrections_status ON corrections (status)"
             )
 
     def _migrate_watchlist_schema(self, conn: sqlite3.Connection) -> None:
@@ -810,6 +879,116 @@ class LocalSQLiteBackend:
             )
         return cur.rowcount > 0
 
+    def save_trace(self, trace: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO traces (
+                    chat_id, ts, trace_id, user_message, fast_path, playbook_hits,
+                    history_msg_count, history_char_count, tools, iterations,
+                    usage, usage_by_iteration, total_ms, outcome, reply_char_count,
+                    model, ttl
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trace["chat_id"],
+                    trace["ts"],
+                    trace["trace_id"],
+                    trace["user_message"],
+                    int(trace["fast_path"]),
+                    json.dumps(trace["playbook_hits"], ensure_ascii=False),
+                    trace["history_msg_count"],
+                    trace["history_char_count"],
+                    json.dumps(trace["tools"], ensure_ascii=False),
+                    trace["iterations"],
+                    json.dumps(trace["usage"], ensure_ascii=False),
+                    json.dumps(trace["usage_by_iteration"], ensure_ascii=False),
+                    trace["total_ms"],
+                    trace["outcome"],
+                    trace["reply_char_count"],
+                    trace.get("model"),
+                    trace["ttl"],
+                ),
+            )
+
+    @staticmethod
+    def _row_to_trace(row: sqlite3.Row) -> dict[str, Any]:
+        d = dict(row)
+        d.pop("id", None)
+        d["fast_path"] = bool(d["fast_path"])
+        d["playbook_hits"] = json.loads(d["playbook_hits"])
+        d["tools"] = json.loads(d["tools"])
+        d["usage"] = json.loads(d["usage"])
+        d["usage_by_iteration"] = json.loads(d["usage_by_iteration"])
+        return d
+
+    def list_traces(
+        self, chat_id: str | None = None, since: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        query = "SELECT * FROM traces WHERE 1=1"
+        params: list[Any] = []
+        if chat_id is not None:
+            query += " AND chat_id = ?"
+            params.append(chat_id)
+        if since is not None:
+            query += " AND ts >= ?"
+            params.append(since)
+        query += " ORDER BY ts DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [self._row_to_trace(row) for row in rows]
+
+    def save_correction(
+        self,
+        chat_id: str,
+        correction_text: str,
+        context_question: str | None,
+        context_answer: str | None,
+    ) -> str:
+        correction_id = str(uuid.uuid4())
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO corrections (
+                    correction_id, chat_id, created_at, correction_text,
+                    context_question, context_answer, status, ttl
+                )
+                VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    correction_id,
+                    chat_id,
+                    datetime.now(timezone.utc).isoformat(),
+                    correction_text,
+                    context_question,
+                    context_answer,
+                    int(time.time()) + CORRECTIONS_TTL_SECONDS,
+                ),
+            )
+        return correction_id
+
+    def list_corrections(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        query = "SELECT * FROM corrections"
+        params: list[Any] = []
+        if status is not None:
+            query += " WHERE status = ?"
+            params.append(status)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as conn:
+            rows = conn.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_correction_status(self, correction_id: str, status: str) -> bool:
+        with self._connect() as conn:
+            cur = conn.execute(
+                "UPDATE corrections SET status = ? WHERE correction_id = ?",
+                (status, correction_id),
+            )
+        return cur.rowcount > 0
+
     def export_rows(self) -> dict[str, list[dict[str, Any]]]:
         with self._connect() as conn:
             conversations = [
@@ -909,6 +1088,8 @@ class DynamoDBBackend:
         self._company_summaries = resource.Table(company_summaries_table())
         self._news = resource.Table(news_table())
         self._rate_limits = resource.Table(rate_limits_table())
+        self._traces = resource.Table(traces_table())
+        self._corrections = resource.Table(corrections_table())
 
     def save_message(self, chat_id: str, role: str, content: str) -> None:
         self._conversations.put_item(
@@ -1358,3 +1539,134 @@ class DynamoDBBackend:
         if not item:
             return None
         return {"id": item["headline"], "summary": item["summary"]}
+
+    def save_trace(self, trace: dict[str, Any]) -> None:
+        # Nested/compound fields are stored as JSON strings (rather than
+        # DynamoDB maps/lists) to sidestep float->Decimal conversion for
+        # playbook scores and keep list_traces' return shape identical to
+        # LocalSQLiteBackend's (both json.loads on read).
+        self._traces.put_item(
+            Item={
+                "chat_id": trace["chat_id"],
+                "sk": f"{trace['ts']}#{trace['trace_id']}",
+                "ts": trace["ts"],
+                "trace_id": trace["trace_id"],
+                "user_message": trace["user_message"],
+                "fast_path": bool(trace["fast_path"]),
+                "playbook_hits": json.dumps(trace["playbook_hits"], ensure_ascii=False),
+                "history_msg_count": trace["history_msg_count"],
+                "history_char_count": trace["history_char_count"],
+                "tools": json.dumps(trace["tools"], ensure_ascii=False),
+                "iterations": trace["iterations"],
+                "usage": json.dumps(trace["usage"], ensure_ascii=False),
+                "usage_by_iteration": json.dumps(trace["usage_by_iteration"], ensure_ascii=False),
+                "total_ms": trace["total_ms"],
+                "outcome": trace["outcome"],
+                "reply_char_count": trace["reply_char_count"],
+                "model": trace.get("model"),
+                "ttl": trace["ttl"],
+                "bucket": trace.get("bucket", "trace"),
+            }
+        )
+
+    @staticmethod
+    def _item_to_trace(item: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "chat_id": item["chat_id"],
+            "ts": item["ts"],
+            "trace_id": item["trace_id"],
+            "user_message": item.get("user_message"),
+            "fast_path": bool(item.get("fast_path")),
+            "playbook_hits": json.loads(item["playbook_hits"]),
+            "history_msg_count": int(item.get("history_msg_count", 0)),
+            "history_char_count": int(item.get("history_char_count", 0)),
+            "tools": json.loads(item["tools"]),
+            "iterations": int(item.get("iterations", 0)),
+            "usage": json.loads(item["usage"]),
+            "usage_by_iteration": json.loads(item["usage_by_iteration"]),
+            "total_ms": int(item.get("total_ms", 0)),
+            "outcome": item.get("outcome"),
+            "reply_char_count": int(item.get("reply_char_count", 0)),
+            "model": item.get("model"),
+            "ttl": int(item.get("ttl", 0)),
+        }
+
+    def list_traces(
+        self, chat_id: str | None = None, since: str | None = None, limit: int = 50
+    ) -> list[dict[str, Any]]:
+        if chat_id is not None:
+            key_cond = Key("chat_id").eq(chat_id)
+            if since is not None:
+                key_cond &= Key("sk").gte(since)
+            resp = self._traces.query(
+                KeyConditionExpression=key_cond,
+                ScanIndexForward=False,
+                Limit=limit,
+            )
+        else:
+            key_cond = Key("bucket").eq("trace")
+            if since is not None:
+                key_cond &= Key("ts").gte(since)
+            resp = self._traces.query(
+                IndexName="trace-time-index",
+                KeyConditionExpression=key_cond,
+                ScanIndexForward=False,
+                Limit=limit,
+            )
+        return [self._item_to_trace(item) for item in resp.get("Items", [])]
+
+    def save_correction(
+        self,
+        chat_id: str,
+        correction_text: str,
+        context_question: str | None,
+        context_answer: str | None,
+    ) -> str:
+        correction_id = str(uuid.uuid4())
+        self._corrections.put_item(
+            Item={
+                "correction_id": correction_id,
+                "chat_id": chat_id,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "correction_text": correction_text,
+                "context_question": context_question,
+                "context_answer": context_answer,
+                "status": "pending",
+                "ttl": int(time.time()) + CORRECTIONS_TTL_SECONDS,
+            }
+        )
+        return correction_id
+
+    def list_corrections(self, status: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+        if status is not None:
+            resp = self._corrections.query(
+                IndexName="status-index",
+                KeyConditionExpression=Key("status").eq(status),
+                ScanIndexForward=False,
+                Limit=limit,
+            )
+            return [dict(item) for item in resp.get("Items", [])]
+
+        items: list[dict[str, Any]] = []
+        resp = self._corrections.scan()
+        items.extend(resp.get("Items", []))
+        while "LastEvaluatedKey" in resp:
+            resp = self._corrections.scan(ExclusiveStartKey=resp["LastEvaluatedKey"])
+            items.extend(resp.get("Items", []))
+        items.sort(key=lambda it: it["created_at"], reverse=True)
+        return [dict(item) for item in items[:limit]]
+
+    def update_correction_status(self, correction_id: str, status: str) -> bool:
+        try:
+            self._corrections.update_item(
+                Key={"correction_id": correction_id},
+                UpdateExpression="SET #s = :s",
+                ExpressionAttributeNames={"#s": "status"},
+                ExpressionAttributeValues={":s": status},
+                ConditionExpression="attribute_exists(correction_id)",
+            )
+            return True
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return False
+            raise

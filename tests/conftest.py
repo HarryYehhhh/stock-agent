@@ -24,6 +24,8 @@ EARNINGS_NOTIFICATIONS = "test-earnings-notifications"
 COMPANY_SUMMARIES = "test-company-summaries"
 NEWS = "test-news"
 RATE_LIMITS = "test-rate-limits"
+TRACES = "test-traces"
+CORRECTIONS = "test-corrections"
 QUEUE_NAME = "test-updates"
 
 
@@ -42,6 +44,8 @@ def env(monkeypatch):
     monkeypatch.setenv("COMPANY_SUMMARIES_TABLE", COMPANY_SUMMARIES)
     monkeypatch.setenv("NEWS_TABLE", NEWS)
     monkeypatch.setenv("RATE_LIMITS_TABLE", RATE_LIMITS)
+    monkeypatch.setenv("TRACES_TABLE", TRACES)
+    monkeypatch.setenv("CORRECTIONS_TABLE", CORRECTIONS)
     monkeypatch.setenv("FINNHUB_API_KEY", "fake-finnhub")
     monkeypatch.setenv("GROQ_API_KEY", "fake-groq")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot")
@@ -173,6 +177,50 @@ def aws():
             AttributeDefinitions=[
                 {"AttributeName": "chat_id", "AttributeType": "S"},
                 {"AttributeName": "window_key", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName=TRACES,
+            KeySchema=[
+                {"AttributeName": "chat_id", "KeyType": "HASH"},
+                {"AttributeName": "sk", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "chat_id", "AttributeType": "S"},
+                {"AttributeName": "sk", "AttributeType": "S"},
+                {"AttributeName": "bucket", "AttributeType": "S"},
+                {"AttributeName": "ts", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "trace-time-index",
+                    "KeySchema": [
+                        {"AttributeName": "bucket", "KeyType": "HASH"},
+                        {"AttributeName": "ts", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
+            ],
+            BillingMode="PAY_PER_REQUEST",
+        )
+        ddb.create_table(
+            TableName=CORRECTIONS,
+            KeySchema=[{"AttributeName": "correction_id", "KeyType": "HASH"}],
+            AttributeDefinitions=[
+                {"AttributeName": "correction_id", "AttributeType": "S"},
+                {"AttributeName": "status", "AttributeType": "S"},
+                {"AttributeName": "created_at", "AttributeType": "S"},
+            ],
+            GlobalSecondaryIndexes=[
+                {
+                    "IndexName": "status-index",
+                    "KeySchema": [
+                        {"AttributeName": "status", "KeyType": "HASH"},
+                        {"AttributeName": "created_at", "KeyType": "RANGE"},
+                    ],
+                    "Projection": {"ProjectionType": "ALL"},
+                }
             ],
             BillingMode="PAY_PER_REQUEST",
         )
