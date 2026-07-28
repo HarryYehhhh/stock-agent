@@ -28,7 +28,7 @@ from agent.db.subscribers import get_all_active
 from agent.prompts import summary_system_prompt
 from agent.telegram_client import send_message
 from agent.tools._http import client
-from agent.tools.news import is_headline_relevant, is_junk_headline
+from agent.tools.news import is_headline_relevant, is_high_credibility_source, is_junk_headline
 from agent.tools.quote import get_quote
 
 log = Logger()
@@ -142,6 +142,7 @@ def refresh_news(days_back: int = 1) -> int:
             if not is_headline_relevant(symbol, headline):
                 log.info("headline filtered as not about %s: %s", symbol, headline)
                 continue
+            source = it.get("source")
             items.append({
                 "category": "big7",
                 "symbol": symbol,
@@ -149,6 +150,8 @@ def refresh_news(days_back: int = 1) -> int:
                 "summary": (it.get("summary") or "")[:MAX_SUMMARY_CHARS],
                 "url": it.get("url"),
                 "published_at": _published_at(it),
+                "source": source,
+                "high_credibility": is_high_credibility_source(source),
             })
 
     try:
@@ -164,6 +167,7 @@ def refresh_news(days_back: int = 1) -> int:
             continue
         if not _AI_PATTERN.search(f"{headline} {summary}"):
             continue
+        source = it.get("source")
         items.append({
             "category": "ai",
             "symbol": None,
@@ -171,6 +175,8 @@ def refresh_news(days_back: int = 1) -> int:
             "summary": summary[:MAX_SUMMARY_CHARS],
             "url": it.get("url"),
             "published_at": _published_at(it),
+            "source": source,
+            "high_credibility": is_high_credibility_source(source),
         })
         picked += 1
         if picked >= MAX_STORE_AI:

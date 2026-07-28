@@ -317,6 +317,49 @@ def test_is_junk_headline_handles_empty_and_none():
     assert news.is_junk_headline("") is False
 
 
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Reuters",
+        "reuters",
+        "REUTERS",
+        "Dow Jones",
+        "Associated Press",
+        "AP",
+        "CNBC",
+        "cnbc",
+        "Financial Times",
+        "The Wall Street Journal",
+        "Wall Street Journal",
+        "Bloomberg",
+        "bloomberg",
+    ],
+)
+def test_is_high_credibility_source_matches_whitelist(source):
+    assert news.is_high_credibility_source(source) is True
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "Yahoo",
+        "Benzinga",
+        "SeekingAlpha",
+        "ChartMill",
+        "Bloomberg Law",
+        "via Bloomberg",
+        "Bloomberg News Wire",
+    ],
+)
+def test_is_high_credibility_source_rejects_non_whitelisted_and_non_exact_bloomberg(source):
+    assert news.is_high_credibility_source(source) is False
+
+
+def test_is_high_credibility_source_handles_missing_source():
+    assert news.is_high_credibility_source(None) is False
+    assert news.is_high_credibility_source("") is False
+
+
 def test_news_filters_out_junk_headlines(mock_http):
     mock_http.get.return_value = _resp([
         {"headline": "Apple reports record Q3 revenue", "summary": "...", "url": "u", "datetime": 0, "source": "s"},

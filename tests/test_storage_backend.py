@@ -315,6 +315,134 @@ def test_local_list_news_since_filters_and_orders_by_published_at(local_store):
     assert row["published_at"] == "2026-07-23T12:00:00+00:00"
 
 
+def test_insert_news_stores_source_and_high_credibility(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.insert_news(
+        [
+            {
+                "category": "big7",
+                "symbol": "AAPL",
+                "headline": "Apple beats estimates",
+                "summary": "...",
+                "url": "https://example.com/1",
+                "published_at": "2026-07-23T00:00:00Z",
+                "source": "Reuters",
+                "high_credibility": True,
+            },
+            {
+                "category": "big7",
+                "symbol": "NVDA",
+                "headline": "Nvidia ships new chip",
+                "summary": "...",
+                "url": "https://example.com/2",
+                "published_at": "2026-07-23T00:00:00Z",
+                "source": "Yahoo",
+                "high_credibility": False,
+            },
+        ]
+    )
+
+    rows = backend.list_news_since("2026-07-23T00:00:00Z")
+    by_headline = {row["headline"]: row for row in rows}
+
+    assert by_headline["Apple beats estimates"]["source"] == "Reuters"
+    assert by_headline["Apple beats estimates"]["high_credibility"] is True
+    assert by_headline["Nvidia ships new chip"]["source"] == "Yahoo"
+    assert by_headline["Nvidia ships new chip"]["high_credibility"] is False
+
+
+def test_insert_news_defaults_source_and_high_credibility_when_omitted(local_store):
+    """Items without source/high_credibility (e.g. older callers) still insert
+    cleanly with source=None, high_credibility=False."""
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.insert_news(
+        [
+            {
+                "category": "general",
+                "symbol": "AAPL",
+                "headline": "Apple beats estimates",
+                "summary": "...",
+                "url": "https://example.com/1",
+                "published_at": "2026-07-23T00:00:00Z",
+            }
+        ]
+    )
+
+    row = backend.list_news_since("2026-07-23T00:00:00Z")[0]
+    assert row["source"] is None
+    assert row["high_credibility"] is False
+
+
+def test_news_schema_migration_of_pre_existing_store(monkeypatch, tmp_path):
+    """Pre-existing DBs created before source/high_credibility existed migrate
+    cleanly; old rows get source=NULL, high_credibility=0."""
+    store_path = tmp_path / "old_news.sqlite3"
+    with sqlite3.connect(store_path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE news (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                symbol TEXT,
+                headline TEXT NOT NULL UNIQUE,
+                summary TEXT NOT NULL,
+                url TEXT,
+                published_at TEXT NOT NULL,
+                fetched_at TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO news (category, symbol, headline, summary, url, published_at, fetched_at)
+            VALUES ('big7', 'AAPL', 'Old pre-migration story', 'old', NULL,
+                    '2026-07-01T00:00:00+00:00', '2026-07-01T00:00:00+00:00')
+            """
+        )
+
+    monkeypatch.setenv("STORAGE_BACKEND", "local")
+    monkeypatch.setenv("LOCAL_STORE_PATH", str(store_path))
+    clear_db_caches()
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+
+    with sqlite3.connect(store_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(news)")}
+    assert {"source", "high_credibility"} <= columns
+
+    rows = backend.list_news_since("2000-01-01T00:00:00+00:00")
+    old_row = next(r for r in rows if r["headline"] == "Old pre-migration story")
+    assert old_row["source"] is None
+    assert old_row["high_credibility"] is False
+
+    # New inserts/reads work fine post-migration.
+    backend.insert_news(
+        [
+            {
+                "category": "big7",
+                "symbol": "NVDA",
+                "headline": "New post-migration story",
+                "summary": "new",
+                "url": None,
+                "published_at": "2026-07-26T00:00:00+00:00",
+                "source": "CNBC",
+                "high_credibility": True,
+            }
+        ]
+    )
+    rows = backend.list_news_since("2000-01-01T00:00:00+00:00")
+    new_row = next(r for r in rows if r["headline"] == "New post-migration story")
+    assert new_row["source"] == "CNBC"
+    assert new_row["high_credibility"] is True
+
+    clear_db_caches()
+
+
 def test_insert_news_reinserting_existing_headlines_returns_zero(local_store):
     from agent.db.backend import get_backend
 
@@ -456,6 +584,66 @@ def test_dynamodb_list_news_since_filters_orders_and_shapes_rows(aws):
     assert row["summary"] == "s2"
     assert row["url"] == "https://example.com/new"
     assert row["published_at"] == "2026-07-23T12:00:00Z"
+
+
+def test_dynamodb_insert_news_stores_source_and_high_credibility(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.insert_news(
+        [
+            {
+                "category": "big7",
+                "symbol": "AAPL",
+                "headline": "Apple beats estimates",
+                "summary": "...",
+                "url": "https://example.com/1",
+                "published_at": "2026-07-23T00:00:00Z",
+                "source": "Reuters",
+                "high_credibility": True,
+            },
+            {
+                "category": "big7",
+                "symbol": "NVDA",
+                "headline": "Nvidia ships new chip",
+                "summary": "...",
+                "url": "https://example.com/2",
+                "published_at": "2026-07-23T00:00:00Z",
+                "source": "Yahoo",
+                "high_credibility": False,
+            },
+        ]
+    )
+
+    rows = backend.list_news_since("2026-07-23T00:00:00Z")
+    by_headline = {row["headline"]: row for row in rows}
+
+    assert by_headline["Apple beats estimates"]["source"] == "Reuters"
+    assert by_headline["Apple beats estimates"]["high_credibility"] is True
+    assert by_headline["Nvidia ships new chip"]["source"] == "Yahoo"
+    assert by_headline["Nvidia ships new chip"]["high_credibility"] is False
+
+
+def test_dynamodb_insert_news_defaults_source_and_high_credibility_when_omitted(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.insert_news(
+        [
+            {
+                "category": "general",
+                "symbol": "AAPL",
+                "headline": "Apple beats estimates",
+                "summary": "...",
+                "url": "https://example.com/1",
+                "published_at": "2026-07-23T00:00:00Z",
+            }
+        ]
+    )
+
+    row = backend.list_news_since("2026-07-23T00:00:00Z")[0]
+    assert row["source"] is None
+    assert row["high_credibility"] is False
 
 
 def test_local_backend_increment_rate_limit_counts_per_chat_and_window(local_store):

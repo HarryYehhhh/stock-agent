@@ -183,6 +183,68 @@ def test_refresh_news_stores_and_dedupes(local_store, mock_finnhub):
     assert ms.refresh_news(days_back=1) == 0
 
 
+def test_refresh_news_stores_source_and_high_credibility_flag(local_store, monkeypatch):
+    """Both ingestion lines (Big 7 company news and AI tech news) must
+    preserve Finnhub's `source` field and flag whitelisted outlets."""
+
+    def fake_company_news(symbol, date_from, date_to):
+        if symbol != "AAPL":
+            return []
+        return [
+            {
+                "headline": "Apple unveils new iPhone lineup",
+                "summary": "s",
+                "datetime": 1_800_000_000,
+                "source": "Reuters",
+            },
+            {
+                "headline": "Apple stock climbs after earnings beat",
+                "summary": "s",
+                "datetime": 1_800_000_000,
+                "source": "Yahoo",
+            },
+        ]
+
+    def fake_tech_news():
+        return [
+            {
+                "headline": "New AI model launched by big lab",
+                "summary": "",
+                "datetime": 1_800_000_000,
+                "source": "Bloomberg",
+            },
+            {
+                "headline": "AI startup raises funding round",
+                "summary": "",
+                "datetime": 1_800_000_000,
+                "source": "Bloomberg Law",
+            },
+            {
+                "headline": "AI chips in high demand, no source field",
+                "summary": "",
+                "datetime": 1_800_000_000,
+            },
+        ]
+
+    monkeypatch.setattr(ms, "_fetch_company_news", fake_company_news)
+    monkeypatch.setattr(ms, "_fetch_tech_news", fake_tech_news)
+
+    ms.refresh_news(days_back=1)
+
+    with sqlite3.connect(local_store) as conn:
+        conn.row_factory = sqlite3.Row
+        rows = {
+            r["headline"]: (r["source"], r["high_credibility"])
+            for r in conn.execute("SELECT headline, source, high_credibility FROM news")
+        }
+
+    assert rows["Apple unveils new iPhone lineup"] == ("Reuters", 1)
+    assert rows["Apple stock climbs after earnings beat"] == ("Yahoo", 0)
+    assert rows["New AI model launched by big lab"] == ("Bloomberg", 1)
+    assert rows["AI startup raises funding round"] == ("Bloomberg Law", 0)
+    assert rows["AI chips in high demand, no source field"] == (None, 0)
+
+
 def test_refresh_news_filters_headlines_not_about_the_symbol(local_store, monkeypatch, caplog):
     """Regression: Finnhub's /company-news is mention-based tagging, so an
     Intel-earnings story that merely mentions Apple as a customer can get

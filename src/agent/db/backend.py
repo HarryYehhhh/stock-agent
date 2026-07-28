@@ -251,10 +251,23 @@ class LocalSQLiteBackend:
                     summary TEXT NOT NULL,
                     url TEXT,
                     published_at TEXT NOT NULL,
-                    fetched_at TEXT NOT NULL
+                    fetched_at TEXT NOT NULL,
+                    source TEXT,
+                    high_credibility INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
+            # Migrate pre-existing DBs created before source/high_credibility
+            # existed. Old rows get source=NULL, high_credibility=0.
+            news_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(news)")
+            }
+            if "source" not in news_columns:
+                conn.execute("ALTER TABLE news ADD COLUMN source TEXT")
+            if "high_credibility" not in news_columns:
+                conn.execute(
+                    "ALTER TABLE news ADD COLUMN high_credibility INTEGER NOT NULL DEFAULT 0"
+                )
             conn.execute(
                 """
                 CREATE INDEX IF NOT EXISTS idx_news_published
@@ -680,9 +693,9 @@ class LocalSQLiteBackend:
                     """
                     INSERT OR IGNORE INTO news (
                         category, symbol, headline, summary, url,
-                        published_at, fetched_at
+                        published_at, fetched_at, source, high_credibility
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         it["category"],
@@ -692,6 +705,8 @@ class LocalSQLiteBackend:
                         it.get("url"),
                         it["published_at"],
                         fetched_at,
+                        it.get("source"),
+                        int(bool(it.get("high_credibility"))),
                     ),
                 )
             return conn.total_changes - before
@@ -700,14 +715,18 @@ class LocalSQLiteBackend:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, category, symbol, headline, summary, url, published_at
+                SELECT id, category, symbol, headline, summary, url, published_at,
+                       source, high_credibility
                 FROM news
                 WHERE published_at >= ?
                 ORDER BY published_at DESC
                 """,
                 (published_from,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [
+            {**dict(row), "high_credibility": bool(row["high_credibility"])}
+            for row in rows
+        ]
 
     def insert_market_summary(
         self,
@@ -851,11 +870,11 @@ class LocalSQLiteBackend:
                 ).fetchall()
             ]
             news = [
-                dict(row)
+                {**dict(row), "high_credibility": bool(row["high_credibility"])}
                 for row in conn.execute(
                     """
                     SELECT id, category, symbol, headline, summary, url,
-                           published_at, fetched_at
+                           published_at, fetched_at, source, high_credibility
                     FROM news
                     ORDER BY id ASC
                     """
@@ -1244,11 +1263,14 @@ class DynamoDBBackend:
                 "summary": it.get("summary", ""),
                 "fetched_at": fetched_at,
                 "ttl": ttl,
+                "high_credibility": bool(it.get("high_credibility")),
             }
             if it.get("symbol") is not None:
                 item["symbol"] = it["symbol"]
             if it.get("url") is not None:
                 item["url"] = it["url"]
+            if it.get("source") is not None:
+                item["source"] = it["source"]
             try:
                 self._news.put_item(
                     Item=item, ConditionExpression="attribute_not_exists(headline)"
@@ -1291,6 +1313,8 @@ class DynamoDBBackend:
                 "summary": item.get("summary"),
                 "url": item.get("url"),
                 "published_at": item["published_at"],
+                "source": item.get("source"),
+                "high_credibility": bool(item.get("high_credibility")),
             }
             for item in items
         ]
