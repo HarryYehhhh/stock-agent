@@ -29,6 +29,8 @@ Globals:
         COMPANY_SUMMARIES_TABLE: !Ref CompanySummariesTable
         NEWS_TABLE: !Ref NewsTable
         RATE_LIMITS_TABLE: !Ref RateLimitsTable
+        TRACES_TABLE: !Ref TracesTable
+        CORRECTIONS_TABLE: !Ref CorrectionsTable
         UPDATES_QUEUE_URL: !Ref UpdatesQueue
         POWERTOOLS_SERVICE_NAME: !Ref AppName
         LOG_LEVEL: INFO
@@ -207,6 +209,66 @@ Resources:
         AttributeName: ttl
         Enabled: true
 
+  TracesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AppName}-traces"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: chat_id
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: bucket
+          AttributeType: S
+        - AttributeName: ts
+          AttributeType: S
+      KeySchema:
+        - AttributeName: chat_id
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: trace-time-index
+          KeySchema:
+            - AttributeName: bucket
+              KeyType: HASH
+            - AttributeName: ts
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  CorrectionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub "${AppName}-corrections"
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: correction_id
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: created_at
+          AttributeType: S
+      KeySchema:
+        - AttributeName: correction_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: status-index
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: created_at
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
   UpdatesQueue:
     Type: AWS::SQS::Queue
     Properties:
@@ -280,6 +342,10 @@ Resources:
             TableName: !Ref WatchlistTable
         - DynamoDBCrudPolicy:
             TableName: !Ref EarningsCalendarTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TracesTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref CorrectionsTable
         - SQSPollerPolicy:
             QueueName: !GetAtt UpdatesQueue.QueueName
         - Statement:
@@ -324,6 +390,8 @@ Resources:
             TableName: !Ref CompanySummariesTable
         - DynamoDBCrudPolicy:
             TableName: !Ref NewsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref TracesTable
         - Statement:
             - Effect: Allow
               Action: ssm:GetParameters

@@ -5,12 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import re
-from datetime import date
+import time
+import uuid
+from datetime import date, datetime, timezone
 from functools import lru_cache
 
 from groq import APIStatusError, BadRequestError, Groq
 
 from agent.config import groq_api_key
+from agent.db.backend import get_backend
 from agent.db.watchlist import get_watchlist
 from agent.fast_path import extract_ticker, try_fast_answer
 from agent.knowledge.retrieval import PLAYBOOKS_DIR, Section, retrieve_scored
@@ -22,6 +25,9 @@ log = logging.getLogger(__name__)
 MODEL = "llama-3.3-70b-versatile"
 MAX_TOOL_LOOPS = 10
 MAX_TOOL_USE_FAILED_RETRIES = 3
+
+# Request trace TTL (ADR-0013): aligned with CONVERSATION_TTL_SECONDS (30 days).
+TRACE_TTL_SECONDS = 30 * 24 * 3600
 
 _TOKEN_RE = re.compile(r"token=[^&\s]+")
 
@@ -127,6 +133,55 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
     (e.g. scheduler's per-company summary generation) where watchlist
     scoping doesn't apply.
     """
+    # --- Request trace (ADR-0013): pure observation, accumulated alongside
+    # the existing logic below and never fed back into `messages`. ---
+    trace_start = time.perf_counter()
+    trace_id = uuid.uuid4().hex[:12]
+    trace_ts = datetime.now(timezone.utc).isoformat()
+    trace_chat_id = chat_id if chat_id is not None else "__none__"
+    history_msg_count = len(history)
+    history_char_count = sum(len(item.get("content", "")) for item in history)
+    playbook_hits: list[tuple[Section, float]] = []
+    tool_trace: list[dict] = []
+    usage_by_iteration: list[dict] = []
+    iterations = 0
+
+    def finalize(outcome: str, reply: str) -> str:
+        total_ms = int((time.perf_counter() - trace_start) * 1000)
+        prompt_tokens = sum(u["prompt"] for u in usage_by_iteration)
+        completion_tokens = sum(u["completion"] for u in usage_by_iteration)
+        trace = {
+            "chat_id": trace_chat_id,
+            "ts": trace_ts,
+            "trace_id": trace_id,
+            "user_message": user_message,
+            "fast_path": outcome == "fast_path",
+            "playbook_hits": [
+                {"source": section.source, "score": score} for section, score in playbook_hits
+            ],
+            "history_msg_count": history_msg_count,
+            "history_char_count": history_char_count,
+            "tools": tool_trace,
+            "iterations": iterations,
+            "usage": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+            },
+            "usage_by_iteration": usage_by_iteration,
+            "total_ms": total_ms,
+            "outcome": outcome,
+            "reply_char_count": len(reply),
+            "model": MODEL,
+            "ttl": int(time.time()) + TRACE_TTL_SECONDS,
+            "bucket": "trace",
+        }
+        try:
+            get_backend().save_trace(trace)
+        except Exception:
+            log.warning("save_trace failed for trace_id=%s", trace_id, exc_info=True)
+        return reply
+
     # Empty watchlist blocks earnings queries entirely (including explicit-
     # ticker ones), so the fast path — which answers a ticker's earnings
     # date directly without going through the LLM/system prompt — must be
@@ -145,7 +200,7 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
             fast_answer is not None,
         )
         if fast_answer is not None:
-            return fast_answer
+            return finalize("fast_path", fast_answer)
 
     messages: list[dict] = [
         {
@@ -178,6 +233,7 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
     tool_use_failed_count = 0
 
     for _ in range(MAX_TOOL_LOOPS):
+        iterations += 1
         try:
             response = _client().chat.completions.create(
                 model=MODEL,
@@ -196,7 +252,7 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
                     tool_use_failed_count,
                     _sanitize_error(str(e)),
                 )
-                return "⚠️ 工具呼叫連續失敗，請換個問法再試。"
+                return finalize("tool_use_failed_exhausted", "⚠️ 工具呼叫連續失敗，請換個問法再試。")
             log.warning("tool_use_failed, asking model to retry: %s", _sanitize_error(str(e)))
             messages.append({
                 "role": "user",
@@ -211,17 +267,20 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
                 "groq API error status=%s: %s", e.status_code, _sanitize_error(str(e))
             )
             if e.status_code == 413:
-                return "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。"
+                return finalize("groq_error", "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。")
             if e.status_code == 429:
-                return "⏳ 今日 AI 額度已用完或請求過於頻繁，請稍後再試。"
-            return "⚠️ AI 服務暫時無法回應，請稍後再試。"
+                return finalize("groq_error", "⏳ 今日 AI 額度已用完或請求過於頻繁，請稍後再試。")
+            return finalize("groq_error", "⚠️ AI 服務暫時無法回應，請稍後再試。")
 
         usage = getattr(response, "usage", None)
         if usage:
+            prompt_tokens = getattr(usage, "prompt_tokens", 0)
+            completion_tokens = getattr(usage, "completion_tokens", 0)
+            usage_by_iteration.append({"prompt": prompt_tokens, "completion": completion_tokens})
             log.info(
                 "groq usage: input=%s output=%s",
-                getattr(usage, "prompt_tokens", 0),
-                getattr(usage, "completion_tokens", 0),
+                prompt_tokens,
+                completion_tokens,
             )
 
         message = response.choices[0].message
@@ -248,7 +307,17 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
                     args = json.loads(tc.function.arguments or "{}")
                 except json.JSONDecodeError:
                     args = {}
+                tool_started = time.perf_counter()
                 tool_result = _run_tool(tc.function.name, args)
+                tool_trace.append({
+                    "iteration": iterations,
+                    "name": tc.function.name,
+                    "args": _sanitize_error(json.dumps(args, ensure_ascii=False, default=str)),
+                    "duration_ms": int((time.perf_counter() - tool_started) * 1000),
+                    "result_type": type(tool_result).__name__,
+                    "result_size": len(tool_result) if isinstance(tool_result, (list, dict, str)) else None,
+                    "ok": "error" not in tool_result,
+                })
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -256,6 +325,6 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
                 })
             continue
 
-        return (message.content or "").strip()
+        return finalize("completed", (message.content or "").strip())
 
-    return "（推理超過最大迴圈次數，請換個問法重試）"
+    return finalize("loop_exceeded", "（推理超過最大迴圈次數，請換個問法重試）")

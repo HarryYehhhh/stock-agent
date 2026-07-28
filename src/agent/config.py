@@ -95,6 +95,14 @@ def rate_limits_table() -> str:
     return os.environ.get("RATE_LIMITS_TABLE", "earnings-agent-rate-limits")
 
 
+def traces_table() -> str:
+    return os.environ.get("TRACES_TABLE", "earnings-agent-traces")
+
+
+def corrections_table() -> str:
+    return os.environ.get("CORRECTIONS_TABLE", "earnings-agent-corrections")
+
+
 def updates_queue_url() -> str:
     return os.environ["UPDATES_QUEUE_URL"]
 

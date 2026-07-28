@@ -10,6 +10,7 @@ from aws_lambda_powertools import Logger
 
 from agent.agent import run_agent
 from agent.db.conversations import build_messages, get_history, save_message
+from agent.db.corrections import save_correction
 from agent.db.subscribers import subscribe, unsubscribe
 from agent.db.watchlist import (
     add_to_watchlist,
@@ -23,6 +24,7 @@ logger = Logger()
 
 WATCH_USAGE = "用法：/watch <SYMBOL>，例如 /watch AAPL"
 UNWATCH_USAGE = "用法：/unwatch <SYMBOL>，例如 /unwatch AAPL"
+CORRECT_USAGE = "用法：/correct <糾正內容>，例如 /correct AAPL 財報應該是 8/1 盤後公布"
 LOCAL_ONLY_MESSAGE = "⚠️ 目前僅本地模式支援自訂追蹤清單。"
 
 REPLAY_WINDOW = timedelta(minutes=10)
@@ -42,7 +44,8 @@ WELCOME = (
     "/unsubscribe — 取消訂閱\n"
     "/watchlist — 查看我的追蹤清單\n"
     "/watch <SYMBOL> — 新增追蹤股票，例如 /watch AAPL\n"
-    "/unwatch <SYMBOL> — 移除追蹤股票，例如 /unwatch AAPL"
+    "/unwatch <SYMBOL> — 移除追蹤股票，例如 /unwatch AAPL\n"
+    "/correct <內容> — 糾正 bot 的回答，將由維護者審核"
 )
 
 
@@ -140,6 +143,21 @@ def _process_update(body: dict) -> None:
             send_message(chat_id, f"✅ 已將 {symbol} 從追蹤清單移除")
         else:
             send_message(chat_id, f"ℹ️ {symbol} 不在您的追蹤清單中")
+        return
+
+    if text == "/correct" or text.startswith("/correct "):
+        arg = text[len("/correct") :].strip()
+        if not arg:
+            send_message(chat_id, CORRECT_USAGE)
+            return
+        context_question = None
+        context_answer = None
+        prev = get_history(chat_id, limit=2)
+        if len(prev) == 2 and prev[0]["role"] == "user" and prev[1]["role"] == "assistant":
+            context_question = prev[0]["content"]
+            context_answer = prev[1]["content"]
+        save_correction(chat_id, arg, context_question, context_answer)
+        send_message(chat_id, "✅ 已收到你的糾正，將由維護者審核後決定是否納入知識庫")
         return
 
     replay_reply = _find_replay(chat_id, text)
