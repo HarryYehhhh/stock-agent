@@ -71,7 +71,7 @@ make ecr-lifecycle    # 對所有 earningsagente* repo 套用 infra/ecr-lifecycl
 
 - **API Gateway**：4xx / 5xx / latency / request count
 - **WebhookFunction**：invocations、errors、duration（webhook 應快速回應，不跑長任務）
-- **SQS**：`ApproximateNumberOfMessagesVisible`、`ApproximateAgeOfOldestMessage`、DLQ message count（DLQ 有任何訊息都應通知）
+- **SQS**：`ApproximateNumberOfMessagesVisible`、`ApproximateAgeOfOldestMessage`、DLQ message count（DLQ 有任何訊息都應通知，已由 `earnings-agent-dlq-messages` alarm 涵蓋）
 - **ProcessorFunction**：errors、duration 接近 300s timeout——這是 AI agent 出錯的第一現場（Groq API error、Finnhub error、DynamoDB error、Telegram send failure、tool-use loop exception）
 - **SchedulerFunction**：daily invocation 是否發生、errors、Telegram push 是否失敗
 

@@ -420,6 +420,23 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref PipelineAlarmsTopic]
 
+  DlqMessagesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AppName}-dlq-messages"
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt UpdatesDLQ.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref PipelineAlarmsTopic]
+
 Outputs:
   WebhookUrl:
     Description: Public webhook URL for Telegram setWebhook
