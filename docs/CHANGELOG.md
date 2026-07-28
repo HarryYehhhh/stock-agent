@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-28 — news-source-credibility — evaluator — ✅ Pass
+- 連結：docs/qa-reports/news-source-credibility.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 477/490（13 個 `test_local_integration.py` socket bind PermissionError 與本次改動無關）；停用沙盒重跑 490/490 passed；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。news 表新增 `source`/`high_credibility`，Big7 與 AI 兩條入庫線對稱覆蓋；白名單完全比對（casefold）測過 `Bloomberg Law`/`via Bloomberg` 等 substring 陷阱皆正確排除；SQLite 遷移比照既有 `earnings_calendar.updated_at` 模式且有專門測試驗證舊資料不丟；DynamoDB 端 `source` 比照 `symbol`/`url` 的 None 不寫入模式、`high_credibility` 固定寫布林，兩端一致；`select_news`/摘要邏輯零改動。可合併。
+
 ## 2026-07-28 — watchlist-scoped-earnings — evaluator — ✅ Pass
 - 連結：docs/qa-reports/watchlist-scoped-earnings.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 462/462 passed（沙盒內 13 個既知 `test_local_integration.py` socket bind PermissionError 與本次改動無關，停用沙盒重跑全綠）；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。`run_agent(chat_id=...)` 注入 watchlist system message（空清單阻擋含明確 ticker 的財報查詢，且連 code-level fast path 一併跳過）；`/watch` 指令提示與 `processor_handler.py` 實際 routing 逐字核對一致；財報回覆日期/盤前中後格式規則已補進 `SYSTEM_INSTRUCTION`。diff 集中 4 檔 + 1 新測試檔，surgical。可合併。

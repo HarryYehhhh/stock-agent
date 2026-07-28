@@ -82,6 +82,35 @@ def is_headline_relevant(symbol: str, headline: str | None) -> bool:
     return bool(pattern.search(headline))
 
 
+# High-credibility wire services / financial media, used to flag stored
+# news for later consumers to filter/prioritize (ingestion itself is not
+# filtered). Comparison is case-insensitive exact match against the whole
+# `source` string — no substring matching — so e.g. "Bloomberg Law" or "via
+# Bloomberg" do NOT count as Bloomberg.
+HIGH_CREDIBILITY_SOURCES: frozenset[str] = frozenset(
+    name.casefold()
+    for name in (
+        "Reuters",
+        "Dow Jones",
+        "Associated Press",
+        "AP",
+        "CNBC",
+        "Financial Times",
+        "The Wall Street Journal",
+        "Wall Street Journal",
+        "Bloomberg",
+    )
+)
+
+
+def is_high_credibility_source(source: str | None) -> bool:
+    """True if `source` is an exact (case-insensitive) match for a
+    whitelisted high-credibility outlet. Missing/empty source is False."""
+    if not source:
+        return False
+    return source.casefold() in HIGH_CREDIBILITY_SOURCES
+
+
 NEWS_TOOL = {
     "name": "get_stock_news",
     "description": (

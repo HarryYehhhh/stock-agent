@@ -75,11 +75,14 @@ def _news_item(row: dict, ttl: int) -> dict:
         "summary": row["summary"],
         "fetched_at": row["fetched_at"],
         "ttl": ttl,
+        "high_credibility": bool(row.get("high_credibility")),
     }
     if row.get("symbol") is not None:
         item["symbol"] = row["symbol"]
     if row.get("url") is not None:
         item["url"] = row["url"]
+    if row.get("source") is not None:
+        item["source"] = row["source"]
     return item
 
 

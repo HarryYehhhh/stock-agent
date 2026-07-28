@@ -188,6 +188,47 @@ def test_upload_write_copies_rows_to_dynamodb(aws, local_store):
     assert aws["ddb"].Table("test-earnings-notifications").scan()["Count"] == 0
 
 
+def test_upload_write_copies_news_source_and_high_credibility_fields(aws, local_store):
+    from agent.db.upload_local_store import main
+
+    get_backend().insert_news(
+        [
+            {
+                "category": "big7",
+                "symbol": "AAPL",
+                "headline": "Apple beats estimates",
+                "summary": "solid quarter",
+                "url": "https://example.com/1",
+                "published_at": "2026-07-23T00:00:00+00:00",
+                "source": "Reuters",
+                "high_credibility": True,
+            },
+            {
+                "category": "ai",
+                "symbol": None,
+                "headline": "New model released",
+                "summary": "",
+                "url": None,
+                "published_at": "2026-07-22T00:00:00+00:00",
+                "source": "Yahoo",
+                "high_credibility": False,
+            },
+        ]
+    )
+
+    assert main(["--write"]) == 0
+
+    news_by_headline = {
+        item["headline"]: item for item in aws["ddb"].Table("test-news").scan()["Items"]
+    }
+    big7 = news_by_headline["Apple beats estimates"]
+    assert big7["source"] == "Reuters"
+    assert big7["high_credibility"] is True
+    ai = news_by_headline["New model released"]
+    assert ai["source"] == "Yahoo"
+    assert ai["high_credibility"] is False
+
+
 def test_upload_write_is_idempotent(aws, local_store):
     """Rerunning the upload with the same local data must not duplicate rows."""
     from agent.db.upload_local_store import main
