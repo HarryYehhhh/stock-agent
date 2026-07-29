@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-29 — ddb-retain-policy — evaluator — ✅ Pass
+- 連結：docs/qa-reports/ddb-retain-policy.md
+- 驗證：Unit pass（533/533，`PYTHONPATH=src uv run pytest tests/ -v`；沙盒內需停用 sandbox 才能跑通 `test_local_integration.py` 的 socket bind，既有現象與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：`infra/template.yaml` 六張不可重建資料表（Conversations/Subscribers/Watchlist/Traces/Corrections/EarningsNotifications）加 `DeletionPolicy: Retain` + `UpdateReplacePolicy: Retain`，五張可重建快取表維持不動；`git diff` 僅 +12 行 template、+29 行測試，surgical；新增 `test_retain_policy_on_tables_with_unrecoverable_data` 雙向斷言六表有五表無；`sam validate --lint` 通過；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-29 — trace-playbook-hits-test — evaluator — ✅ Pass
 - 連結：docs/qa-reports/trace-playbook-hits-test.md
 - 驗證：Unit pass（532/532，`PYTHONPATH=src uv run pytest tests/ -q`；沙盒內需停用 sandbox 才能跑通 `test_local_integration.py` 的 socket bind，既有現象）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
