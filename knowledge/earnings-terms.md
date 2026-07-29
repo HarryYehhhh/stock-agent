@@ -2,7 +2,7 @@
 
 ## EPS beat / miss 是什麼意思
 
-EPS（每股盈餘，Earnings Per Share）beat（超出預期）表示實際 EPS 高於分析師共識預期（consensus estimate）；miss（不及預期）表示實際 EPS 低於共識預期。EPS 剛好等於預期則稱為 in-line（符合預期）。判斷 beat/miss 要拿實際公布值與 `get_analyst_estimates` 回傳的共識 EPS 比較。
+EPS（每股盈餘，Earnings Per Share）beat（超出預期）表示實際 EPS 高於分析師共識預期（consensus estimate）；miss（不及預期）表示實際 EPS 低於共識預期。EPS 剛好等於預期則稱為 in-line（符合預期）。判斷 beat/miss 要拿實際公布值與 `get_earnings_calendar` 回傳的 `epsEstimate` 共識 EPS 比較。
 
 ## guidance 財測 / 展望是什麼
 
@@ -18,4 +18,4 @@ Finnhub earnings calendar 的 `hour` 欄位用以下代碼表示財報公布時�
 
 ## consensus 分析師共識是什麼
 
-consensus（共識、分析師共識預期）是多位分析師對某公司財務指標（EPS、營收等）預估值的平均或中位數，代表市場普遍預期。`get_analyst_estimates` 回傳的 EPS 預估、評級分佈都屬於分析師共識資料，是判斷財報 beat/miss 的比較基準。
+consensus（共識、分析師共識預期）是多位分析師對某公司財務指標（EPS、營收等）預估值的平均或中位數，代表市場普遍預期。`get_earnings_calendar` 回傳的 `epsEstimate`、`revenueEstimate` 都屬於分析師共識資料，是判斷財報 beat/miss 的比較基準。

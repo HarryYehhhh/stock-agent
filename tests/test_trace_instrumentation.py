@@ -86,9 +86,9 @@ def test_completed_outcome_with_tool_call_saves_full_trace(local_store, mock_cli
     def fake_tool(symbol):
         return {"symbol": symbol, "buy": 10}
 
-    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_analyst_estimates", fake_tool)
+    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_quote", fake_tool)
     mock_client.chat.completions.create.side_effect = [
-        _tool_response("get_analyst_estimates", {"symbol": "AAPL"}, prompt=15, completion=5),
+        _tool_response("get_quote", {"symbol": "AAPL"}, prompt=15, completion=5),
         _text_response("AAPL 分析師評級：買入 10", prompt=30, completion=12),
     ]
     history = [
@@ -114,7 +114,7 @@ def test_completed_outcome_with_tool_call_saves_full_trace(local_store, mock_cli
     tools = trace["tools"]
     assert len(tools) == 1
     tool = tools[0]
-    assert tool["name"] == "get_analyst_estimates"
+    assert tool["name"] == "get_quote"
     assert tool["iteration"] == 1
     assert tool["result_type"] == "dict"
     assert tool["result_size"] == 2

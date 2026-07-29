@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-29 — remove-analyst-estimates — evaluator — ✅ Pass
+- 連結：docs/qa-reports/remove-analyst-estimates.md
+- 驗證：Unit pass（533/533，`PYTHONPATH=src uv run pytest tests/ -v`；沙盒內需停用 sandbox 才能跑通 `test_local_integration.py` 的 socket bind，既有現象與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：移除 `get_analyst_estimates`（線上事故：把分析師人數誤講成百分比）；`src/agent/tools/estimates.py` 刪除、`ALL_TOOL_SCHEMAS`/`TOOL_FUNCTIONS` 清乾淨、`knowledge/` 三份文件改引用 `get_earnings_calendar` 的 `epsEstimate`/`revenueEstimate`（已核對欄位確實存在）、playbook 新增禁止回覆分析師評級/目標價規則；BM25 playbook retrieval 手動驗證仍正確命中該禁止規則；`docs/` 既有檔案未被改寫；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-29 — deploy-guard — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/deploy-guard.md
 - 驗證：Unit pass（537/537，`PYTHONPATH=src uv run pytest tests/ -v`；沙盒內需停用 sandbox 才能跑通 `test_local_integration.py` 的 socket bind，既有現象與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
