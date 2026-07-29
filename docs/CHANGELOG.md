@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-29 — deploy-guard — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/deploy-guard.md
+- 驗證：Unit pass（537/537，`PYTHONPATH=src uv run pytest tests/ -v`；沙盒內需停用 sandbox 才能跑通 `test_local_integration.py` 的 socket bind，既有現象與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：新增 `scripts/deploy-guard.sh` 作為 `make deploy` 的 pre-flight guard（工作區必須乾淨 + HEAD 必須等於 `origin/main`），不符則印繁中錯誤訊息 + 非零 exit + 絕不執行 `sam deploy`，並保留 `FORCE=1` 逃生口；本機 `sam deploy` 加 `--confirm-changeset`（CI 走獨立路徑不受影響，`.github/workflows/deploy.yml` 與 `smoke-test-processor` 零改動）；已手動驗證多種「guard 自身失效」情境（腳本缺失、無執行權限、非 git repo、fetch 離線失敗）皆 fail-closed，不會誤放行；暫時破壞 dirty-check 邏輯重跑測試證實 `tests/test_deploy_guard.py` 不是空轉；🔴 0、🟡 1（`Makefile` 新增的 `SAM ?= sam` 變數化非測試必要，建議簡化為硬編碼 `sam`）；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-29 — ddb-retain-policy — evaluator — ✅ Pass
 - 連結：docs/qa-reports/ddb-retain-policy.md
 - 驗證：Unit pass（533/533，`PYTHONPATH=src uv run pytest tests/ -v`；沙盒內需停用 sandbox 才能跑通 `test_local_integration.py` 的 socket bind，既有現象與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
