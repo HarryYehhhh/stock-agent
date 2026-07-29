@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-29 — tool-schema-and-docs — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/tool-schema-and-docs.md
+- 驗證：Unit pass（525/538，`PYTHONPATH=src uv run pytest tests/ -q`；13 errors 為既有 sandbox socket bind 限制，`git stash` 前後對比確認非本次改動造成，baseline 524 passed）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：循環次數 0；🔴 0、🟡 1（`get_market_summary` 文件描述未提及 cache miss 時仍打 Finnhub 取即時指數）；未解 P1 1 件（非阻塞，建議下次順手修正）
+
 ## 2026-07-29 — remove-analyst-estimates — evaluator — ✅ Pass
 - 連結：docs/qa-reports/remove-analyst-estimates.md
 - 驗證：Unit pass（533/533，`PYTHONPATH=src uv run pytest tests/ -v`；沙盒內需停用 sandbox 才能跑通 `test_local_integration.py` 的 socket bind，既有現象與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）

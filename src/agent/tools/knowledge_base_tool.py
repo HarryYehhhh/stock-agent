@@ -32,10 +32,6 @@ KNOWLEDGE_BASE_TOOL = {
                 "type": "string",
                 "description": "Search query, e.g. '道瓊怎麼查' or 'EPS beat'",
             },
-            "top_k": {
-                "type": "integer",
-                "description": "Number of results to return (default 3, max 5)",
-            },
         },
         "required": ["query"],
     },

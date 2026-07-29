@@ -517,6 +517,15 @@ def test_get_market_summary_default_days_back_is_one(monkeypatch):
 # --- knowledge base ---
 
 
+def test_knowledge_base_tool_schema_has_no_top_k():
+    """top_k is model-facing schema surface removed to avoid tool_use_failed
+    when the model passes a string (e.g. "5") that fails Groq's server-side
+    integer validation. The Python default/clamp still apply internally."""
+    properties = knowledge_base_tool.KNOWLEDGE_BASE_TOOL["input_schema"]["properties"]
+    assert "top_k" not in properties
+    assert knowledge_base_tool.KNOWLEDGE_BASE_TOOL["input_schema"]["required"] == ["query"]
+
+
 def test_search_knowledge_base_returns_dict_with_results_and_source():
     out = knowledge_base_tool.search_knowledge_base("道瓊怎麼查")
     assert isinstance(out, dict)
