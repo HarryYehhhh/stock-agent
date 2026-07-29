@@ -28,7 +28,7 @@ Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. 
 
 **Key modules under `src/agent/`:**
 - `agent.py` — Groq tool-use loop with function calling; `run_agent()` is the core entry point
-- `tools/` — Three tools: `get_earnings_calendar`, `get_analyst_estimates`, `get_stock_news` (all hit Finnhub API). Tool schemas are defined in each module and aggregated in `tools/__init__.py` as `ALL_TOOL_SCHEMAS` / `TOOL_FUNCTIONS`
+- `tools/` — Five tools: `get_earnings_calendar`, `get_stock_news`, `get_quote` (hit Finnhub API), `get_market_summary` (DB cache hit skips Finnhub; cache miss also hits Finnhub via `get_quote` for index quotes), `search_knowledge_base` (reads local `knowledge/*.md`, no external call). Tool schemas are defined in each module and aggregated in `tools/__init__.py` as `ALL_TOOL_SCHEMAS` / `TOOL_FUNCTIONS`
 - `db/` — DynamoDB access via boto3 resource API with `@lru_cache` table singletons: `conversations` (chat history, 20-message limit, 30-day TTL), `subscribers` (push notifications), `dedup` (Telegram update deduplication via conditional put)
 - `config.py` — Reads from SSM Parameter Store in Lambda (`/earnings-agent/` prefix), falls back to env vars locally. All accessors are `@lru_cache`
 - `telegram_client.py` — Telegram Bot API wrapper; auto-chunks long messages at 4000 chars, falls back to plain text on Markdown parse failure
