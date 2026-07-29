@@ -47,7 +47,8 @@ build:
 	cd infra && sam build
 
 deploy:
-	cd infra && sam deploy --stack-name $(STACK) --region $(REGION) --capabilities CAPABILITY_IAM --resolve-image-repos --resolve-s3 $(if $(GUIDED),--guided,)
+	./scripts/deploy-guard.sh
+	cd infra && sam deploy --stack-name $(STACK) --region $(REGION) --capabilities CAPABILITY_IAM --resolve-image-repos --resolve-s3 --confirm-changeset $(if $(GUIDED),--guided,)
 	$(MAKE) smoke-test-processor
 
 # Post-deploy smoke test：sam deploy 成功後 invoke 一次 processor Lambda（無副作用的空
