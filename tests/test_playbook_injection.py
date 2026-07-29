@@ -125,16 +125,16 @@ def test_run_tool_success_logs_name_args_and_result_info(caplog):
 
     from agent.tools import TOOL_FUNCTIONS
 
-    original = TOOL_FUNCTIONS.get("get_analyst_estimates")
-    TOOL_FUNCTIONS["get_analyst_estimates"] = fake_tool
+    original = TOOL_FUNCTIONS.get("get_quote")
+    TOOL_FUNCTIONS["get_quote"] = fake_tool
     try:
         with caplog.at_level(logging.INFO):
-            agent_module._run_tool("get_analyst_estimates", {"symbol": "AAPL"})
+            agent_module._run_tool("get_quote", {"symbol": "AAPL"})
     finally:
         if original is not None:
-            TOOL_FUNCTIONS["get_analyst_estimates"] = original
+            TOOL_FUNCTIONS["get_quote"] = original
 
-    records = [r for r in caplog.records if "get_analyst_estimates" in r.message and "succeeded" in r.message]
+    records = [r for r in caplog.records if "get_quote" in r.message and "succeeded" in r.message]
     assert records, "expected a tool-success log record"
     msg = records[0].message
     assert "AAPL" in msg

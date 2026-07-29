@@ -131,9 +131,9 @@ def test_uses_groq_model():
 
 
 def test_system_instruction_is_string():
-    # get_analyst_estimates / get_earnings_calendar routing rules moved to
-    # knowledge/playbooks/earnings.md (ADR-0009 pre-injection); get_quote
-    # routing (S12) stays a generic, non-event tool rule in SYSTEM_INSTRUCTION.
+    # get_earnings_calendar routing rules moved to knowledge/playbooks/earnings.md
+    # (ADR-0009 pre-injection); get_quote routing (S12) stays a generic,
+    # non-event tool rule in SYSTEM_INSTRUCTION.
     assert isinstance(agent_module.SYSTEM_INSTRUCTION, str)
     assert "繁體中文" in agent_module.SYSTEM_INSTRUCTION
     assert "get_quote" in agent_module.SYSTEM_INSTRUCTION
@@ -149,7 +149,6 @@ def test_build_tools_returns_function_definitions():
     assert all(t["type"] == "function" for t in tools)
     assert names == {
         "get_earnings_calendar",
-        "get_analyst_estimates",
         "get_stock_news",
         "get_quote",
         "get_market_summary",
@@ -170,10 +169,10 @@ def test_tool_use_loop_dispatches_and_continues(mock_client, monkeypatch):
         captured["symbol"] = symbol
         return {"symbol": symbol, "buy": 10}
 
-    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_analyst_estimates", fake_tool)
+    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_quote", fake_tool)
 
     mock_client.chat.completions.create.side_effect = [
-        _tool_response("get_analyst_estimates", {"symbol": "AAPL"}),
+        _tool_response("get_quote", {"symbol": "AAPL"}),
         _text_response("AAPL 分析師評級：買入 10"),
     ]
 
@@ -196,9 +195,9 @@ def test_tool_exception_returned_as_error_to_groq(mock_client, monkeypatch):
     def boom(**_):
         raise RuntimeError("finnhub down")
 
-    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_analyst_estimates", boom)
+    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_quote", boom)
     mock_client.chat.completions.create.side_effect = [
-        _tool_response("get_analyst_estimates", {"symbol": "AAPL"}),
+        _tool_response("get_quote", {"symbol": "AAPL"}),
         _text_response("已處理錯誤"),
     ]
 

@@ -10,7 +10,7 @@ import pytest
 import agent.market_summary as market_summary_module
 from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
 from agent.tools import _http as tools_http
-from agent.tools import earnings, estimates, knowledge_base_tool, market_summary_tool, news, quote
+from agent.tools import earnings, knowledge_base_tool, market_summary_tool, news, quote
 
 
 @pytest.fixture
@@ -35,7 +35,6 @@ def test_all_tool_schemas_have_required_fields():
     names = {t["name"] for t in ALL_TOOL_SCHEMAS}
     assert names == {
         "get_earnings_calendar",
-        "get_analyst_estimates",
         "get_stock_news",
         "get_quote",
         "get_market_summary",
@@ -49,6 +48,16 @@ def test_all_tool_schemas_have_required_fields():
 def test_tool_functions_match_schemas():
     schema_names = {t["name"] for t in ALL_TOOL_SCHEMAS}
     assert set(TOOL_FUNCTIONS.keys()) == schema_names
+
+
+def test_analyst_estimates_tool_removed():
+    """get_analyst_estimates was removed (misread as percentages instead of
+    analyst-count distribution; EPS estimates already covered by
+    get_earnings_calendar)."""
+    names = {t["name"] for t in ALL_TOOL_SCHEMAS}
+    assert len(ALL_TOOL_SCHEMAS) == 5
+    assert "get_analyst_estimates" not in names
+    assert "get_analyst_estimates" not in TOOL_FUNCTIONS
 
 
 # --- earnings ---
@@ -235,19 +244,6 @@ def test_get_company_industry_calls_profile2(mock_http):
 def test_get_company_industry_returns_empty_when_missing(mock_http):
     mock_http.get.return_value = _resp({})
     assert earnings.get_company_industry("UNKNOWN") == ""
-
-
-# --- estimates ---
-
-def test_estimates_combines_recommendation_and_eps(mock_http):
-    mock_http.get.side_effect = [
-        _resp([{"period": "2026-04-01", "buy": 20, "hold": 5, "sell": 1, "strongBuy": 8, "strongSell": 0}]),
-        _resp({"data": [{"period": "2026-06-30", "epsAvg": 1.5, "epsHigh": 1.8, "epsLow": 1.2, "numberAnalysts": 25}]}),
-    ]
-    out = estimates.get_analyst_estimates("AAPL")
-    assert out["symbol"] == "AAPL"
-    assert out["recommendation"]["buy"] == 20
-    assert out["eps_estimates"][0]["eps_avg"] == 1.5
 
 
 # --- news ---

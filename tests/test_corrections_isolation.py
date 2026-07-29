@@ -48,9 +48,9 @@ def test_run_agent_never_reads_corrections_table(local_store, mock_client, monke
     def fake_tool(symbol):
         return {"symbol": symbol, "buy": 10}
 
-    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_analyst_estimates", fake_tool)
+    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_quote", fake_tool)
     mock_client.chat.completions.create.side_effect = [
-        _tool_response("get_analyst_estimates", {"symbol": "AAPL"}),
+        _tool_response("get_quote", {"symbol": "AAPL"}),
         _text_response("AAPL 分析師評級：買入 10"),
     ]
 
