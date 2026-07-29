@@ -133,6 +133,35 @@ def test_completed_outcome_with_tool_call_saves_full_trace(local_store, mock_cli
     }
 
 
+def test_completed_outcome_with_tool_call_and_playbook_hit_saves_trace(
+    local_store, mock_client, monkeypatch
+):
+    """completed + 至少一次工具呼叫 + 命中 playbook 的組合：trace["playbook_hits"]
+    須含正確的 source/score（contract Tests required › Trace 第二項字面要求）。"""
+
+    def fake_tool(date_from, date_to, symbol=None):
+        return [{"symbol": symbol or "AAPL", "date": "2026-08-01", "hour": "amc"}]
+
+    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_earnings_calendar", fake_tool)
+    mock_client.chat.completions.create.side_effect = [
+        _tool_response("get_earnings_calendar", {"date_from": "2026-07-27", "date_to": "2026-08-02"}),
+        _text_response("本週財報：AAPL 8/1 盤後"),
+    ]
+
+    out = agent_module.run_agent("本週有什麼公司發布財報", [], chat_id="777")
+
+    assert out == "本週財報：AAPL 8/1 盤後"
+    trace = _latest_trace("777")
+    assert trace["outcome"] == "completed"
+    assert len(trace["tools"]) == 1
+    assert trace["tools"][0]["name"] == "get_earnings_calendar"
+
+    hits = trace["playbook_hits"]
+    assert hits, "expected playbook_hits to be non-empty for a calibrated hit query"
+    assert hits[0]["source"] == "earnings#財報行事曆時間查詢"
+    assert hits[0]["score"] >= agent_module.MIN_SCORE
+
+
 def test_loop_exceeded_outcome_saves_trace(local_store, mock_client):
     mock_client.chat.completions.create.return_value = SimpleNamespace(
         choices=[
