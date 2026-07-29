@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-29 — trace-playbook-hits-test — evaluator — ✅ Pass
+- 連結：docs/qa-reports/trace-playbook-hits-test.md
+- 驗證：Unit pass（532/532，`PYTHONPATH=src uv run pytest tests/ -q`；沙盒內需停用 sandbox 才能跑通 `test_local_integration.py` 的 socket bind，既有現象）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：純補測試，回應 `docs/qa-reports/request-trace-and-corrections-sprint.md` 的 🟡 項目——新增 `test_completed_outcome_with_tool_call_and_playbook_hit_saves_trace`，對 `trace["playbook_hits"]` 的 source/score 做斷言；`git diff` 僅動 `tests/test_trace_instrumentation.py` 一檔，無 production code 改動；🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-29 — request-trace-and-corrections-sprint — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/request-trace-and-corrections-sprint.md
 - 備註：`PYTHONPATH=src uv run pytest tests/ -v` 沙盒內 518/531（13 個 `test_local_integration.py` socket bind PermissionError 為既有沙盒現象，與本次改動無關）；停用沙盒重跑 531/531 passed；🔴 0、🟡 1、循環次數 1、未解 P0/P1 0/0。Trace（1A–1D）與 Corrections（2A–2D）兩 Feature 的 P1 deliverable 全數打勾；`sam validate --lint` 通過；`agent.py` 儀表化 diff 逐行核對零侵入（`_run_tool` 契約、送 Groq messages、所有回覆字串逐字不變）；隔離不變式測試以 spy wrap 真實 backend 方法在一次完整 `run_agent()`（playbook 命中+工具呼叫）中驗證 corrections 讀取方法零呼叫；DoD 要求的 chat_cli/local_server 實測以等效腳本（mock Groq、真實 `run_agent()`/`processor_handler` 路徑）跑過並用正式 CLI 查表得證。唯一 🟡：`test_trace_instrumentation.py` 缺一個「completed+工具呼叫+命中 playbook」組合測試斷言 `playbook_hits` 內容（功能已手動驗證正確，純測試覆蓋缺口，不阻擋合併）。可合併。
