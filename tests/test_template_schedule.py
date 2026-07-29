@@ -115,6 +115,35 @@ def test_scheduler_and_processor_errors_alarms():
         assert props["AlarmActions"] == [{"Ref": "PipelineAlarmsTopic"}]
 
 
+def test_retain_policy_on_tables_with_unrecoverable_data():
+    resources = TEMPLATE["Resources"]
+
+    retained_tables = [
+        "ConversationsTable",
+        "SubscribersTable",
+        "WatchlistTable",
+        "TracesTable",
+        "CorrectionsTable",
+        "EarningsNotificationsTable",
+    ]
+    for name in retained_tables:
+        table = resources[name]
+        assert table["DeletionPolicy"] == "Retain", name
+        assert table["UpdateReplacePolicy"] == "Retain", name
+
+    non_retained_tables = [
+        "ProcessedUpdatesTable",
+        "RateLimitsTable",
+        "EarningsCalendarTable",
+        "NewsTable",
+        "CompanySummariesTable",
+    ]
+    for name in non_retained_tables:
+        table = resources[name]
+        assert "DeletionPolicy" not in table, name
+        assert "UpdateReplacePolicy" not in table, name
+
+
 def test_scheduler_duration_alarm():
     alarm = TEMPLATE["Resources"]["SchedulerDurationAlarm"]
 

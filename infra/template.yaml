@@ -38,6 +38,8 @@ Globals:
 Resources:
   ConversationsTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub "${AppName}-conversations"
       BillingMode: PAY_PER_REQUEST
@@ -57,6 +59,8 @@ Resources:
 
   SubscribersTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub "${AppName}-subscribers"
       BillingMode: PAY_PER_REQUEST
@@ -84,6 +88,8 @@ Resources:
 
   WatchlistTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub "${AppName}-watchlist"
       BillingMode: PAY_PER_REQUEST
@@ -126,6 +132,8 @@ Resources:
 
   EarningsNotificationsTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub "${AppName}-earnings-notifications"
       BillingMode: PAY_PER_REQUEST
@@ -211,6 +219,8 @@ Resources:
 
   TracesTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub "${AppName}-traces"
       BillingMode: PAY_PER_REQUEST
@@ -243,6 +253,8 @@ Resources:
 
   CorrectionsTable:
     Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       TableName: !Sub "${AppName}-corrections"
       BillingMode: PAY_PER_REQUEST
