@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-30 — off-topic-intercept — evaluator — ✅ Pass
+- 連結：docs/qa-reports/off-topic-intercept.md
+- 驗證：Unit pass（537/537 有效測試，`PYTHONPATH=src uv run pytest tests/ -v --ignore=.env --ignore=.env.example`；另 13 errors 為 `tests/test_local_integration.py` 既有 sandbox socket bind 限制，與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：`run_agent` 新增非美股相關問題 pre-LLM 攔截——新增 `knowledge/exceptions/off-topic.md`（6 類例句，獨立目錄不污染 KB/playbook index）+ `EXCEPTIONS_DIR`；`_is_off_topic()` 用既有 `retrieve_scored` 比對，命中（分數 ≥ `EXCEPTION_MIN_SCORE=3.5`）且 playbook 無命中時直接 `finalize("off_topic", "非美股相關問題無法回答")`，不進 Groq；fast path 優先順序維持最前；`debug.py --source exceptions` 校準門檻並實測核對（真陽性最低 3.591、KB 名詞問句雜訊最高 0.384、"AAPL 有什麼新聞" 3.380 邊界案例靠 playbook 非空保護）。抽測「今天天氣如何?」攔截、「什麼是 EPS」/「本益比是什麼」/「本週有什麼公司發布財報」/「AAPL 有什麼新聞」/「今天大盤怎樣」不誤擋、fast path 句不受影響，皆與程式碼行為一致。新增 10 個測試；`test_playbook_injection.py` 兩處「今天天氣如何」改「test」（因該句現在會被攔截），已核對意圖不變非弱化。🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-30 — tool-error-short-circuit — evaluator — ✅ Pass
 - 連結：docs/qa-reports/tool-error-short-circuit.md
 - 驗證：Unit pass（527/527 有效測試，`PYTHONPATH=src uv run pytest tests/ -v`；另 13 errors 為 `tests/test_local_integration.py` 既有 sandbox socket bind 限制，與本次改動無關、不 import `agent.agent`）；Integration not required；E2E not required；External Smoke not requested（blocking: false）

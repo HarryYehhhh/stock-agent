@@ -16,7 +16,7 @@ from agent.config import groq_api_key
 from agent.db.backend import get_backend
 from agent.db.watchlist import get_watchlist
 from agent.fast_path import extract_ticker, try_fast_answer
-from agent.knowledge.retrieval import PLAYBOOKS_DIR, Section, retrieve_scored
+from agent.knowledge.retrieval import EXCEPTIONS_DIR, PLAYBOOKS_DIR, Section, retrieve_scored
 from agent.prompts import SYSTEM_INSTRUCTION, watchlist_context
 from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
 
@@ -49,12 +49,43 @@ PLAYBOOK_TOP_K = 2
 # 3.5 sits above both noise bands and below every genuine hit observed.
 MIN_SCORE = 3.5
 
+# --- Off-topic pre-LLM intercept ---
+# EXCEPTION_MIN_SCORE: unnormalized BM25 threshold (see agent.knowledge.retrieval)
+# a knowledge/exceptions/off-topic.md section's score must clear before a
+# query is treated as non-美股 off-topic. Calibrated against real content
+# (2026-07-30, `python -m agent.knowledge.debug --source exceptions`):
+#   - genuine off-topic hits score >= ~3.6 (e.g. "你好嗎"/"你是誰" = 3.591,
+#     the lowest observed positive; typical hits run 5.4-11.2, e.g. "今天
+#     天氣如何" = 7.7, "最近有什麼好看的電影" = 11.2)
+#   - knowledge-base terminology questions (no playbook hit, so they rely on
+#     this threshold alone) top out around 0.4 (e.g. "什麼是 EPS" / "本益比是
+#     什麼" / "guidance 是什麼意思" all = 0.384, from generic "是什麼" overlap)
+#   - playbook-routable queries (e.g. "AAPL 有什麼新聞" = 3.380) can score
+#     close to this threshold too, but those are separately protected by the
+#     `_retrieve_playbook_hits` non-empty guard in the intercept below, so
+#     this constant only needs to clear the KB-question noise floor
+# 3.5 sits just above the KB-question noise band (~0.4) and just below the
+# lowest genuine off-topic hit observed (3.591).
+EXCEPTION_MIN_SCORE = 3.5
+
+OFF_TOPIC_REPLY = "非美股相關問題無法回答"
+
 
 def _retrieve_playbook_hits(query: str) -> list[tuple[Section, float]]:
     """Score the query against the playbook index and keep only sections
     at or above MIN_SCORE (top_k=2 candidates per PLAYBOOK_TOP_K)."""
     hits = retrieve_scored(query, top_k=PLAYBOOK_TOP_K, source_dir=PLAYBOOKS_DIR)
     return [(section, score) for section, score in hits if score >= MIN_SCORE]
+
+
+def _is_off_topic(query: str) -> bool:
+    """True when the query matches the non-美股 exception corpus at or above
+    EXCEPTION_MIN_SCORE. Only meaningful when combined with an empty
+    `_retrieve_playbook_hits` result (see run_agent) — playbook-routable
+    queries are never treated as off-topic even if they also happen to
+    clear this threshold."""
+    hits = retrieve_scored(query, top_k=1, source_dir=EXCEPTIONS_DIR)
+    return bool(hits) and hits[0][1] >= EXCEPTION_MIN_SCORE
 
 
 def _build_playbook_context(hits: list[tuple[Section, float]]) -> str:
@@ -202,6 +233,20 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
         if fast_answer is not None:
             return finalize("fast_path", fast_answer)
 
+    # Pre-injection (ADR-0009): retrieve against the *current* user message
+    # only (never history, to structurally resist history-pollution) before
+    # entering the tool loop.
+    playbook_hits = _retrieve_playbook_hits(user_message)
+
+    # Off-topic pre-LLM intercept: a query is treated as non-美股 off-topic
+    # only when it clears the exception corpus threshold *and* matched no
+    # playbook — a playbook match means the query is routable to a known
+    # tool, so it's always answered even if it also happens to score against
+    # the exception corpus.
+    if not playbook_hits and _is_off_topic(user_message):
+        log.info("off_topic query=%r", user_message)
+        return finalize("off_topic", OFF_TOPIC_REPLY)
+
     messages: list[dict] = [
         {
             "role": "system",
@@ -212,10 +257,6 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
     if symbols is not None:
         messages.append({"role": "system", "content": watchlist_context(symbols)})
 
-    # Pre-injection (ADR-0009): retrieve against the *current* user message
-    # only (never history, to structurally resist history-pollution) before
-    # entering the tool loop.
-    playbook_hits = _retrieve_playbook_hits(user_message)
     injected = bool(playbook_hits)
     log.info(
         "playbook_injection query=%r hits=%s injected=%s",
