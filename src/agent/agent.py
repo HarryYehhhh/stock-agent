@@ -309,6 +309,7 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
                     args = {}
                 tool_started = time.perf_counter()
                 tool_result = _run_tool(tc.function.name, args)
+                tool_ok = "error" not in tool_result
                 tool_trace.append({
                     "iteration": iterations,
                     "name": tc.function.name,
@@ -316,8 +317,25 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
                     "duration_ms": int((time.perf_counter() - tool_started) * 1000),
                     "result_type": type(tool_result).__name__,
                     "result_size": len(tool_result) if isinstance(tool_result, (list, dict, str)) else None,
-                    "ok": "error" not in tool_result,
+                    "ok": tool_ok,
                 })
+                # A known tool raising an internal exception (Finnhub HTTP
+                # failure, IAM/SSM permission error, ...) must not be fed
+                # back into `messages`: llama-3.3-70b has been observed to
+                # fabricate answers (e.g. earnings dates) from an {"error"}
+                # tool result instead of surfacing the failure. Short-circuit
+                # decisively instead of looping the model further.
+                # Unknown-tool errors (hallucinated tool name) are excluded
+                # here because they're model-correctable — falling through
+                # feeds the error back so the model can retry with a valid
+                # tool name, same as before this change.
+                if not tool_ok and tc.function.name in TOOL_FUNCTIONS:
+                    log.warning(
+                        "tool error short-circuit: tool=%s error=%s",
+                        tc.function.name,
+                        tool_result.get("error"),
+                    )
+                    return finalize("tool_error", "⚠️ 目前無法取得資料，請稍後再試。")
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,

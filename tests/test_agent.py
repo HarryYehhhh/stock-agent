@@ -191,18 +191,24 @@ def test_unknown_tool_does_not_crash(mock_client):
     assert out == "處理完成"
 
 
-def test_tool_exception_returned_as_error_to_groq(mock_client, monkeypatch):
+def test_tool_exception_short_circuits_without_second_groq_call(mock_client, monkeypatch):
+    """A known tool raising an internal exception (e.g. Finnhub HTTP failure,
+    IAM/SSM permission error) must not be fed back to the model — llama-3.3-70b
+    has been observed to fabricate answers from an {"error"} tool result
+    instead of surfacing the failure. Short-circuit with a fixed reply and
+    never call Groq a second time."""
+
     def boom(**_):
         raise RuntimeError("finnhub down")
 
     monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_quote", boom)
     mock_client.chat.completions.create.side_effect = [
         _tool_response("get_quote", {"symbol": "AAPL"}),
-        _text_response("已處理錯誤"),
     ]
 
     out = agent_module.run_agent("test", [])
-    assert out == "已處理錯誤"
+    assert out == "⚠️ 目前無法取得資料，請稍後再試。"
+    assert mock_client.chat.completions.create.call_count == 1
 
 
 def test_tool_use_failed_400_retries_and_recovers(mock_client):

@@ -190,6 +190,53 @@ def test_loop_exceeded_outcome_saves_trace(local_store, mock_client):
     assert trace["iterations"] == agent_module.MAX_TOOL_LOOPS
 
 
+def test_tool_error_short_circuits_and_saves_trace(local_store, mock_client, monkeypatch):
+    """A known tool raising an internal exception (Finnhub/IAM/SSM failure)
+    must short-circuit with a fixed reply instead of feeding the error back
+    to the model, which has fabricated answers from {"error"} tool results
+    in production."""
+
+    def raising_tool(symbol):
+        raise RuntimeError("finnhub http 500")
+
+    monkeypatch.setitem(agent_module.TOOL_FUNCTIONS, "get_quote", raising_tool)
+    mock_client.chat.completions.create.side_effect = [
+        _tool_response("get_quote", {"symbol": "AAPL"}),
+    ]
+
+    out = agent_module.run_agent("AAPL 現在股價？", [], chat_id="555")
+
+    assert out == "⚠️ 目前無法取得資料，請稍後再試。"
+    assert mock_client.chat.completions.create.call_count == 1
+
+    trace = _latest_trace("555")
+    assert trace["outcome"] == "tool_error"
+    assert len(trace["tools"]) == 1
+    tool = trace["tools"][0]
+    assert tool["name"] == "get_quote"
+    assert tool["ok"] is False
+
+
+def test_unknown_tool_error_feeds_back_to_model_and_continues(local_store, mock_client):
+    """Unknown-tool errors (hallucinated tool name) are model-correctable
+    and must keep flowing back into `messages` so the model can retry with
+    a valid tool name — unlike a known tool's internal exception."""
+    mock_client.chat.completions.create.side_effect = [
+        _tool_response("nonexistent_tool", {"symbol": "AAPL"}),
+        _text_response("已改用正確工具回覆"),
+    ]
+
+    out = agent_module.run_agent("test", [], chat_id="556")
+
+    assert out == "已改用正確工具回覆"
+    assert mock_client.chat.completions.create.call_count == 2
+
+    trace = _latest_trace("556")
+    assert trace["outcome"] == "completed"
+    assert trace["tools"][0]["name"] == "nonexistent_tool"
+    assert trace["tools"][0]["ok"] is False
+
+
 def test_groq_error_429_outcome_saves_trace(local_store, mock_client):
     mock_client.chat.completions.create.side_effect = _rate_limit_error()
 
