@@ -5,6 +5,8 @@ Stdlib-only module: no AWS/network involved, no mocking needed.
 
 from __future__ import annotations
 
+import logging
+
 from agent.knowledge import retrieval
 from agent.knowledge.retrieval import Section, parse_sections, retrieve, retrieve_scored, tokenize
 
@@ -258,3 +260,55 @@ def test_stock_news_query_hits_stock_news_playbook():
     results = retrieve_scored("AAPL 有什麼新聞", top_k=2, source_dir=retrieval.PLAYBOOKS_DIR)
     assert results
     assert results[0][0].source.startswith("stock-news#")
+
+
+# --- _resolve_knowledge_dir (production bug: Lambda image is missing the
+# src/ layer, so the old hardcoded parents[3] pointed at /var instead of
+# /var/task/knowledge; the walk-up must find the content dir in both
+# layouts without a magic index) ---
+
+
+def test_resolve_knowledge_dir_local_layout(tmp_path):
+    # <root>/src/agent/knowledge/retrieval.py, content dir at <root>/knowledge.
+    root = tmp_path / "repo"
+    (root / "knowledge").mkdir(parents=True)
+    fake_retrieval_py = root / "src" / "agent" / "knowledge" / "retrieval.py"
+    fake_retrieval_py.parent.mkdir(parents=True)
+
+    found = retrieval._resolve_knowledge_dir(fake_retrieval_py)
+
+    assert found == root / "knowledge"
+
+
+def test_resolve_knowledge_dir_lambda_image_layout(tmp_path):
+    # ${LAMBDA_TASK_ROOT}/agent/knowledge/retrieval.py, content dir copied
+    # as a sibling of agent/ at ${LAMBDA_TASK_ROOT}/knowledge (Dockerfile's
+    # `COPY knowledge/ ./knowledge/`).
+    task_root = tmp_path / "var_task"
+    (task_root / "knowledge").mkdir(parents=True)
+    fake_retrieval_py = task_root / "agent" / "knowledge" / "retrieval.py"
+    fake_retrieval_py.parent.mkdir(parents=True)
+
+    found = retrieval._resolve_knowledge_dir(fake_retrieval_py)
+
+    assert found == task_root / "knowledge"
+
+
+def test_resolve_knowledge_dir_not_found_logs_warning_and_returns_fallback(tmp_path, caplog):
+    # No knowledge/ directory anywhere up the tree.
+    fake_retrieval_py = tmp_path / "agent" / "knowledge" / "retrieval.py"
+    fake_retrieval_py.parent.mkdir(parents=True)
+
+    with caplog.at_level(logging.WARNING, logger="agent.knowledge.retrieval"):
+        found = retrieval._resolve_knowledge_dir(fake_retrieval_py)
+
+    assert not found.is_dir()
+    assert any("knowledge/" in record.message for record in caplog.records)
+
+
+def test_module_level_knowledge_dir_resolves_to_real_repo_knowledge_dir():
+    # Regression guard: importing the module against the real repo layout
+    # must still land on the real knowledge/ content dir (not a magic
+    # parents[N] offset that happens to work only locally).
+    assert retrieval._KNOWLEDGE_DIR.is_dir()
+    assert (retrieval._KNOWLEDGE_DIR / "indices.md").is_file()
