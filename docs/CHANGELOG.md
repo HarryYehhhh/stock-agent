@@ -15,6 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-29 — runbook-triage-method — evaluator — ⚠️ Pass with issues
+- 連結：docs/qa-reports/runbook-triage-method.md
+- 備註：`PYTHONPATH=src uv run pytest tests/ -q` 525 passed/13 errors（既有 sandbox socket bind 限制，與本次純文件改動無關）；🔴 1、🟡 2；循環次數 0（尚未回送 generator）；未解 P0 1。`docs/runbook.md` 新增「回答內容錯誤但系統沒報錯」小節，五組 file:line 引用（`agent.py:180`/`104`/`114`/`244-264`、`earnings.py:102-105`）逐行核對全部正確，trace `tools[]` 欄位、`tool_use_failed` 三層攔截點、processor Lambda 300s timeout 等技術主張皆讀碼驗證成立；`git diff` 僅動這一檔、既有內容零改寫。🔴：開場範例把「META 財報日期講錯」的幻覺歸因給 PR #47、#48（實際核對兩個 PR 的 commit message/diff 均與財報日期無關，真正對應的紀錄是 `snapshot-audit` 離線稽核 2026-07-27 抓到的案例，非現網事故亦未見任何 PR 宣稱修復），需回 generator 修正這段敘述。🟡：`traces 表` 被刪與本節討論請求的因果連結查無實據；新小節長度與粗體偽標題和既有 Incident 排查小節風格落差較大（非阻塞）。
+
 ## 2026-07-29 — tool-schema-and-docs — evaluator — ⚠️ Pass with issues
 - 連結：docs/qa-reports/tool-schema-and-docs.md
 - 驗證：Unit pass（525/538，`PYTHONPATH=src uv run pytest tests/ -q`；13 errors 為既有 sandbox socket bind 限制，`git stash` 前後對比確認非本次改動造成，baseline 524 passed）；Integration not required；E2E not required；External Smoke not requested（blocking: false）

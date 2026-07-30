@@ -101,3 +101,36 @@ make ecr-lifecycle    # 對所有 earningsagente* repo 套用 infra/ecr-lifecycl
 ### Processor 有 LLM API 錯誤（如 Groq 429/503）
 
 通常是外部服務限流或高負載，不一定是程式或部署錯。確認使用者是否收到友善錯誤訊息；若頻繁發生，考慮走 harness 補 retry/backoff 或 fallback 回覆。
+
+### 回答內容錯誤但系統沒報錯（幻覺／資料源追查）
+
+這類最難查——沒有 alarm 會響，系統照常回應，錯的只是內容本身。範例：2026-07-29 07:00:54 UTC 一次回答同時暴露三個問題——把分析師人數講成百分比（已由 PR #47 移除 `get_analyst_estimates` 修掉）、`search_knowledge_base` 的 `top_k` schema 驗證失敗（已由 PR #48 修掉）、以及把財報日期講錯。財報日期講錯的近因是 `get_earnings_calendar` 因 DynamoDB IAM AccessDenied 拋例外，模型在工具全滅後自行編造日期；AccessDenied 靠當天稍後重新部署補回權限而消失，不是程式修正——**工具失敗時模型會編造內容**這個更深層的問題至今未處理。本節記錄的是排查方法，不是重述那次事故。
+
+**排查順序**
+
+1. 先讀錯誤回答的「形狀」，推論它應該用到幾個資料源／哪些 tool，建立可證偽的預期。
+2. 查 traces 表，用 `chat_id` + 時間比對 `tools[]` 是否符合預期；不符就是抓錯請求，不要硬套。
+3. 查 conversations 表拉時間序，找對照組——相近問題的成功案例，diff 兩次執行比單案分析強得多。
+4. trace 缺席也是證據，但先確認 `save_trace` 是 fail-silent（`src/agent/agent.py:180`，寫入失敗只留 warning、不影響回覆）。
+5. 去 CloudWatch 撈該 RequestId 的完整 log，時間窗開窄（±3 分鐘）。
+6. **把 log 訊息回溯到發出它的程式碼行再解讀**——不同來源的相似訊息語意可能完全相反。例如 `src/agent/agent.py:114` 的 `tool %s failed` 是 tool 執行例外；`src/agent/tools/earnings.py:105` 的 `earnings calendar cache write failed` 只是快取寫入失敗，tool 本身可能已成功回傳資料——兩者訊息長得像但意義不同。
+7. 用獨立的第三個資料源交叉驗證，例如 earnings-calendar 表的 `updated_at` 可佐證某次請求有沒有真的寫入。
+8. 用 `filter-pattern` 確認故障是否已終結，回答「現在還壞不壞」。
+
+**判斷「LLM 有沒有呼叫 tool」的三個層次**（只看自己的 tool log 會漏掉第三層）
+
+- 結構化：trace 的 `tools[]`（每筆含 `name`/`args`/`ok`/`duration_ms`/`result_type`/`result_size`）
+- 執行 log：`src/agent/agent.py:104` 的 `tool %s succeeded` / `src/agent/agent.py:114` 的 `tool %s failed`
+- **上游拒絕**：Groq 回 400 `tool_use_failed`（`src/agent/agent.py:244-264`）——模型發出了呼叫，但被伺服器端 schema 驗證擋掉，`_run_tool` 從未進入，自己的 tool log 一片空白。只看前兩層會誤判成「模型沒叫這個 tool」，往完全錯的方向查。
+
+**判斷「是不是 timeout」**
+
+- 每個 tool 的耗時看 trace 的 `duration_ms`；整次請求看 CloudWatch `REPORT` 行的 `Duration`，對照 Lambda timeout（processor 300s）。
+- 依失敗耗時區分性質：timeout 會貼著上限出現；IAM 拒絕／schema 驗證錯誤在毫秒內就回來。
+- 誤判成 timeout 會導致去調 timeout、加 retry、查限流，全部白做。
+
+**紀律**
+
+- 推測要標成推測，不要當結論寫進報告。
+- 至少兩個獨立資料源交叉驗證才收工。
+- 可觀測性設施本身也會壞，而且常與被觀測系統有共同失效來源——2026-07-29 那次事故期間，traces 表恰好因另一起 stale local deploy 事故被刪除，該請求因此無 trace 可查（兩者因果未經查證，僅時間上巧合）——永遠要有第二條路。
