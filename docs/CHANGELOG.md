@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-31 — processor-news-table-iam — evaluator — ✅ Pass
+- 連結：docs/qa-reports/processor-news-table-iam.md
+- 驗證：Unit pass（541/541 有效測試，`PYTHONPATH=src uv run pytest tests/ -q --ignore=.env --ignore=.env.example`；另 13 errors 為 `tests/test_local_integration.py` 既有 sandbox socket bind 限制，與本次改動無關）；Integration `sam validate --lint` pass；E2E not required；External Smoke not requested（blocking: false）
+- 備註：修正 Processor Lambda 缺 NewsTable IAM 權限（`market_summary` 工具讀寫 news 表 AccessDenied → tool error 短路）——`infra/template.yaml` ProcessorFunction 加 `DynamoDBCrudPolicy: TableName: !Ref NewsTable`；評估者從 `db/backend.py` 逆向重做全盤點（不只信 generator 清單），確認 Processor 實際只需 Conversations/Subscribers/Watchlist/EarningsCalendar/Traces/Corrections/News 七表，抓到市場摘要快取借用 NewsTable（`bucket="market_summary"`）的隱性依賴，並抽查確認 Webhook（ProcessedUpdates/RateLimits）與 Scheduler（EarningsNotifications/CompanySummaries）的 policies 未被誤動。🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-30 — knowledge-dir-in-image — evaluator — ✅ Pass
 - 連結：docs/qa-reports/knowledge-dir-in-image.md
 - 驗證：Unit pass（554/554，`PYTHONPATH=src uv run pytest tests/ -q`，重跑兩次穩定；驗收過程另撞見一次午夜跨日造成的既有 flaky 10 failed，已用 `git stash` 對照確認與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）

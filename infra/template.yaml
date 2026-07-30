@@ -358,6 +358,8 @@ Resources:
             TableName: !Ref TracesTable
         - DynamoDBCrudPolicy:
             TableName: !Ref CorrectionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref NewsTable
         - SQSPollerPolicy:
             QueueName: !GetAtt UpdatesQueue.QueueName
         - Statement:
