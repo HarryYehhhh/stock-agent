@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-30 — knowledge-dir-in-image — evaluator — ✅ Pass
+- 連結：docs/qa-reports/knowledge-dir-in-image.md
+- 驗證：Unit pass（554/554，`PYTHONPATH=src uv run pytest tests/ -q`，重跑兩次穩定；驗收過程另撞見一次午夜跨日造成的既有 flaky 10 failed，已用 `git stash` 對照確認與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：修正 production Lambda image 缺 `knowledge/` 目錄、`_KNOWLEDGE_DIR` 硬編碼 `parents[3]` 導致 prod 上三個 BM25 index（KB/playbooks/exceptions）全空的 bug——`Dockerfile` 加 `COPY knowledge/ ./knowledge/`；`retrieval.py` 新增 `_resolve_knowledge_dir()` 往上走訪 parents 找第一個非自身的 `knowledge/` 目錄取代魔術 index，找不到時 `log.warning` 一次（module import 時執行一次，天然滿足只記一次）+ fallback 到不存在的 sentinel 路徑（維持舊有空 index 降級行為）；新增 4 個測試（本機/image 扁平 layout、not-found warning+fallback、真實 repo 的 regression guard）。評估者額外用 `docker build -f Dockerfile .` 建出真實 production image 並 `docker run` 驗證，確認 `_KNOWLEDGE_DIR` 解析為 `/var/task/knowledge`、三個 index 皆非空、`retrieve_scored` 命中正確，非僅本機模擬。🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-30 — off-topic-intercept — evaluator — ✅ Pass
 - 連結：docs/qa-reports/off-topic-intercept.md
 - 驗證：Unit pass（537/537 有效測試，`PYTHONPATH=src uv run pytest tests/ -v --ignore=.env --ignore=.env.example`；另 13 errors 為 `tests/test_local_integration.py` 既有 sandbox socket bind 限制，與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）

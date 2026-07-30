@@ -6,6 +6,7 @@ agent.tools to avoid circular imports with the tools package.
 
 from __future__ import annotations
 
+import logging
 import math
 import re
 from collections import Counter
@@ -13,14 +14,51 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+log = logging.getLogger(__name__)
+
 _ASCII_RE = re.compile(r"[a-z0-9]")
 
 # CJK Unified Ideographs (U+4E00-U+9FFF) + Extension A (U+3400-U+4DBF).
 _CJK_RANGES = (("一", "鿿"), ("㐀", "䶿"))
 
-# knowledge/ lives at the project root, three levels above this file
-# (src/agent/knowledge/retrieval.py -> src/agent -> src -> <root>).
-_KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "knowledge"
+
+def _resolve_knowledge_dir(file_path: Path) -> Path:
+    """Walk up from this module's own directory (the ``knowledge`` python
+    package containing retrieval.py) to find the nearest ancestor that has a
+    *different* ``knowledge/`` child directory -- the one holding the actual
+    markdown content (``knowledge/*.md``, ``knowledge/playbooks/``,
+    ``knowledge/exceptions/``).
+
+    This is layout-agnostic, so it works for both known layouts without a
+    magic parents[N] index: locally the content dir sits at the repo root
+    (src/agent/knowledge/retrieval.py -> src/agent -> src -> <root>/knowledge,
+    i.e. parents[3]); inside the Lambda container image (Dockerfile does
+    ``COPY knowledge/ ./knowledge/``) it sits as a sibling of ``agent/``
+    under ``${LAMBDA_TASK_ROOT}`` (agent/knowledge/retrieval.py -> agent ->
+    /var/task/knowledge, i.e. parents[2]).
+    """
+    package_dir = file_path.resolve().parent
+    for ancestor in package_dir.parents:
+        candidate = ancestor / "knowledge"
+        if candidate.is_dir() and candidate != package_dir:
+            return candidate
+    # No ancestor has a knowledge/ content dir. Note package_dir's own name
+    # is already "knowledge" (it's this module's package dir), so a naive
+    # "package_dir.parent / 'knowledge'" guess would just reconstruct
+    # package_dir itself -- use a sentinel subpath that is guaranteed not
+    # to exist instead, matching the old (pre-fix) silent-empty-index
+    # behavior but with a warning.
+    fallback = package_dir / "_not_found"
+    log.warning(
+        "knowledge/ content directory not found by walking up from %s; "
+        "falling back to %s (BM25 indexes will be empty)",
+        package_dir,
+        fallback,
+    )
+    return fallback
+
+
+_KNOWLEDGE_DIR = _resolve_knowledge_dir(Path(__file__))
 
 # Independent index sources: knowledge/*.md (terminology KB, used by
 # search_knowledge_base), knowledge/playbooks/*.md (tool-routing playbooks,
