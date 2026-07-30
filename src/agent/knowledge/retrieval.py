@@ -22,11 +22,14 @@ _CJK_RANGES = (("一", "鿿"), ("㐀", "䶿"))
 # (src/agent/knowledge/retrieval.py -> src/agent -> src -> <root>).
 _KNOWLEDGE_DIR = Path(__file__).resolve().parents[3] / "knowledge"
 
-# Two independent index sources (ADR-0009): knowledge/*.md (terminology KB,
-# used by search_knowledge_base) and knowledge/playbooks/*.md (tool-routing
-# playbooks, pre-injected by run_agent). Kept as separate directories so the
-# non-recursive glob() in _load_sections naturally never mixes the two.
+# Independent index sources: knowledge/*.md (terminology KB, used by
+# search_knowledge_base), knowledge/playbooks/*.md (tool-routing playbooks,
+# pre-injected by run_agent, ADR-0009) and knowledge/exceptions/*.md
+# (non-美股 off-topic example queries, used by run_agent's pre-LLM off-topic
+# intercept). Kept as separate directories so the non-recursive glob() in
+# _load_sections naturally never mixes them.
 PLAYBOOKS_DIR = _KNOWLEDGE_DIR / "playbooks"
+EXCEPTIONS_DIR = _KNOWLEDGE_DIR / "exceptions"
 
 K1 = 1.5
 B = 0.75

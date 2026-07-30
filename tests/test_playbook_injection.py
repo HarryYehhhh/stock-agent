@@ -83,9 +83,12 @@ def test_run_agent_playbook_context_placed_after_base_system_before_history(mock
 
 
 def test_run_agent_does_not_inject_for_irrelevant_query_fallback(mock_client):
-    mock_client.chat.completions.create.return_value = _text_response("今天天氣不錯")
+    # "test" 對 playbook/exceptions 兩個索引都無命中（見 agent.knowledge.debug），
+    # 純粹驗證「無 playbook 命中 -> 不注入」的 fallback 路徑，不誤觸離題攔截
+    # （agent.py 的 off-topic pre-LLM intercept，見 test_off_topic_intercept.py）。
+    mock_client.chat.completions.create.return_value = _text_response("測試回覆")
 
-    agent_module.run_agent("今天天氣如何", [])
+    agent_module.run_agent("test", [])
 
     messages = mock_client.chat.completions.create.call_args.kwargs["messages"]
     system_messages = [m for m in messages if m["role"] == "system"]
@@ -109,10 +112,11 @@ def test_playbook_injection_log_recorded_when_injected(mock_client, caplog):
 
 
 def test_playbook_injection_log_recorded_when_not_injected(mock_client, caplog):
+    # "test"：無 playbook 命中且不誤觸離題攔截，見上方 fallback 測試的說明。
     mock_client.chat.completions.create.return_value = _text_response("回覆")
 
     with caplog.at_level(logging.INFO):
-        agent_module.run_agent("今天天氣如何", [])
+        agent_module.run_agent("test", [])
 
     records = [r for r in caplog.records if "playbook_injection" in r.message]
     assert records, "expected a playbook_injection log record"
