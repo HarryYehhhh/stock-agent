@@ -2,7 +2,26 @@
 
 - **Contract**: 無 contract（feature skill，直接對照需求描述 + 程式碼品質驗收）
 - **Date**: 2026-07-31
-- **Verdict**: ✅ Pass（第一輪 🔴 Critical 已於複驗確認修復；1 項 🟡 P2 記錄不阻塞）
+- **Verdict**: ✅ Pass（round 2 🔴 Critical 已修復；round 3 為文件對齊追加輪，round 2 的 🟡 P2 已一併解決，全數驗收通過）
+
+## 複驗記錄（round 3：文件對齊 — CLAUDE.md / README.md / tool description）
+
+範圍：`git diff`（未 commit，前兩輪已合併於 `b782201`）涉及 `CLAUDE.md`、`README.md`、`src/agent/tools/market_summary_tool.py` 三個檔案，無其他程式邏輯改動。核心驗收標準是「敘述必須與 code 一致」，逐項對照 code 如下：
+
+- **`market_summary_tool.py:18`**："Big 7 tech stock news" → "major tech stock news"。解決了 round 2 記錄的 🟡 P2。`grep -rn "Big 7 tech stock news\|MARKET_SUMMARY_TOOL\[.description.\]"` 確認無任何測試斷言這段文字，改動不影響測試。
+- **DynamoDB 表總數與 schema**：`infra/template.yaml` 實際有 **11** 個 `AWS::DynamoDB::Table` 資源（`ConversationsTable`/`SubscribersTable`/`ProcessedUpdatesTable`/`WatchlistTable`/`EarningsCalendarTable`/`EarningsNotificationsTable`/`CompanySummariesTable`/`NewsTable`/`RateLimitsTable`/`TracesTable`/`CorrectionsTable`），與 CLAUDE.md「11 DynamoDB tables」及 Schema 表逐條核對：
+  - 每張表的 PK/SK 型別、GSI 名稱（`earning-date-index`/`published-at-index`/`trace-time-index`/`status-index`）、TTL 啟用與否，皆與 `infra/template.yaml` 的 `KeySchema`/`GlobalSecondaryIndexes`/`TimeToLiveSpecification` 逐一比對相符。
+  - TTL 天數（conversations 30天、earnings-calendar 45天、earnings-notifications 30天、company-summaries 30天、news 14天、traces 30天、corrections 90天、market-summary 快取項目 2天、dedup 1小時）皆與 `src/agent/db/backend.py`（`CONVERSATION_TTL_SECONDS`/`EARNINGS_CALENDAR_TTL_SECONDS`/`EARNINGS_NOTIFICATIONS_TTL_SECONDS`/`COMPANY_SUMMARIES_TTL_SECONDS`/`NEWS_TTL_SECONDS`/`MARKET_SUMMARY_TTL_SECONDS`/`CORRECTIONS_TTL_SECONDS`/`DEDUP_TTL_SECONDS`）及 `src/agent/agent.py`（`TRACE_TTL_SECONDS = 30 * 24 * 3600`）的常數值完全一致，無虛構數字。
+- **`db/` 段落的敘述**：`DynamoDBBackend.__init__`（`db/backend.py:1080-1092`）確認 11 個 table handle 皆在 `__init__` 建立一次並重用，singleton 語意由 `get_backend()` 的 `@lru_cache(maxsize=1)` 提供——與 class docstring 幾乎逐字相符，CLAUDE.md 敘述準確。`insert_market_summary()`（`db/backend.py:1503-1529`）確認 DynamoDB 版確實把摘要快取寫進 `self._news`（即 `NewsTable`）並帶 `bucket="market_summary"`，`MARKET_SUMMARY_TTL_SECONDS = 2 * 24 * 3600`；local 版另有獨立 `market_summaries` table。CLAUDE.md「借 NewsTable bucket="market_summary"」的敘述準確。
+- **EventBridge 排程**：`infra/template.yaml:417-436` 確認 `SchedulerFunction` 掛兩個 `ScheduleV2`：`SyncSchedule`（`cron(0 8 * * ? *)`, `Asia/Taipei`, `Input: {"mode": "sync"}`）與 `NotifySchedule`（`cron(0 10 * * ? *)`, `Asia/Taipei`, `Input: {"mode": "notify"}`），與 CLAUDE.md/README 的「08:00 sync / 10:00 notify」完全相符。`scheduler_handler.py` 的 `mode == "sync"` → `sync_earnings()` + 新聞 refresh、`mode == "notify"` → 財報通知（24h 內）+ `push_daily_summary(refresh=False)`，與敘述一致。
+- **SNS/CloudWatch alarms**：`infra/template.yaml:442-520` 確認 1 個 SNS topic（`PipelineAlarmsTopic`）+ 1 個 email subscription + 4 個 `AWS::CloudWatch::Alarm`（`SchedulerErrorsAlarm`/`ProcessorErrorsAlarm`/`SchedulerDurationAlarm`/`DlqMessagesAlarm`），與 CLAUDE.md「SNS alarm topic + 4 CloudWatch alarms（scheduler/processor errors, scheduler duration, DLQ messages）」完全相符。
+- **Processor routing**：`processor_handler.py:88-148` 確認指令集為 `/start`/`/help`、`/subscribe`、`/unsubscribe`、`/watchlist`、`/watch`/`/watch <SYMBOL>`、`/unwatch`/`/unwatch <SYMBOL>`、`/correct`/`/correct <text>`，與 CLAUDE.md 敘述逐一相符。
+- **`tools/` 段落**：`get_market_summary` 補充「cache miss 也會對 12 檔 `TECH_SYMBOLS` 各打一次 `get_quote`」的敘述，與 `market_summary.py` 的 `fetch_stock_quotes(TECH_SYMBOLS)` 呼叫路徑一致（見 round 1/2 已驗證過的程式邏輯）。
+- **README Architecture 段落**：三個 Lambda 的 timeout（webhook 10s、processor 300s）、單一 Docker image + `ImageConfig.Command` 差異化、DynamoDB on-demand billing、`infra/template.yaml` 統一佈建，皆與 `infra/template.yaml`（`WebhookFunction: Timeout: 10`、`ProcessorFunction: Timeout: 300`、`BillingMode: PAY_PER_REQUEST`）相符。`ls plan.md` 確認檔案確實不存在，移除該死連結正確。
+- **README Quick start**：本輪未改動內容，逐條核對 `Makefile` 目標（`test`/`dev`/`ssm-put`/`build`/`deploy`/`set-webhook`）皆存在，generator「全部有效未改」的判斷正確。
+- **測試**：`PYTHONPATH=src uv run pytest tests/ -v` → **555 passed / 13 errors, 0 failed**（13 個 error 為既有 sandbox socket bind 限制，與 round 2 一致），文件與 tool description 改動未影響任何測試。
+
+**發現**：本輪核對的所有敘述皆與 code 相符，**無 Critical、無新增 P2**。額外觀察到一項與本輪改動範圍無關的既有殘留（見下方 🟢 Suggestions 新增項）：`src/agent/scheduler_handler.py:7` 的模組 docstring 仍寫「refresh Big7/AI news」，是本次 sprint 未觸及的殘留措辭（`grep -rn "Big7\|Big 7" src/` 唯一命中處），不影響本輪驗收的 CLAUDE.md/README/tool description 三個檔案，記錄供未來另案處理。
 
 ## 複驗記錄（round 2）
 
@@ -57,14 +76,13 @@
   - **歷史脈絡**：上一輪 `docs/qa-reports/news-headline-relevance.md`（2026-07-28）的 🟢 Suggestion 已明確預警「若之後 Big 7 名單變動需要同步維護 `market_summary.BIG7` 與 `BIG7_ALIASES` 兩處」——這次名單確實變動了，但兩處未同步維護，這正是當初預警的風險兌現。
   - **修復狀態（round 2）**：`BIG7_ALIASES` → `TECH_SYMBOL_ALIASES`，補齊 5 檔別名（`AVGO: Broadcom`、`AMD: Advanced Micro Devices`、`TSM: TSMC, Taiwan Semiconductor`、`ORCL: Oracle`、`NFLX: Netflix`）；回歸測試改用不含裸 ticker 的真實措辭 headline 端到端驗證，能有效防止別名缺漏再次滑過測試。詳見上方「複驗記錄（round 2）」。
 
-### 🟡 Warnings（Should Fix）
-- **`src/agent/tools/market_summary_tool.py:18`**：`MARKET_SUMMARY_TOOL` 的 `description`（面向 LLM 的 tool schema 說明）仍寫 "Big 7 tech stock news, AI industry news and major index performance"，未反映追蹤清單已擴大到 12 檔科技股。
-  - **為何是問題但非阻塞**：此 description 只用於 agent 的 tool-selection 決策（`agent.py` 的 Groq tool-use loop），不是 `generate_market_summary()` 實際產出摘要用的 system prompt（那個已經在 `prompts.py` 正確更新）。觸發呼叫此 tool 的判斷依據是「overall market / daily market recap」等泛用描述，並未以「僅限 Big 7」設限，因此誤導 agent 決策路徑的風險低——例如使用者問 "AMD 今天新聞"，agent 大概率仍會傾向呼叫 `get_stock_news(AMD)` 而非誤判 `get_market_summary` 不涵蓋 AMD 而略過查詢；即使呼叫了 `get_market_summary`，實際回傳內容仍包含 12 檔的量化資料，不會因為 description 過時而遺漏。
-  - **判定**：P2（可另案處理，不阻塞本次合併）。這也是需求文件本身列為「未列入本次範圍」的項目，generator 未動屬合理範圍界定。
-  - **建議修法**：下次順手把 "Big 7 tech stock news" 改成 "major tech stock news"（或列出涵蓋範圍改為泛稱），避免長期與程式碼行為脫節、誤導未來維護者。
+### 🟡 Warnings（Should Fix）— ✅ 已於 round 3 修復
+- ~~**`src/agent/tools/market_summary_tool.py:18`**：`MARKET_SUMMARY_TOOL` 的 `description`（面向 LLM 的 tool schema 說明）仍寫 "Big 7 tech stock news, AI industry news and major index performance"，未反映追蹤清單已擴大到 12 檔科技股。~~
+  - **修復狀態（round 3）**：改為 "major tech stock news"，確認無測試斷言此文字，改動安全。
 
 ### 🟢 Suggestions
 - **`src/agent/market_summary.py:203-213`**（`select_news()`）：內部區域變數與回傳 dict key 沿用 `big7`（例如 `big7: list[dict] = []`），與外部常數 `TECH_SYMBOLS` 命名不一致。這是需求 5 明確要求保留（避免牽動 DB `category` 值與既有消費端），非缺陷，僅記錄供未來若真的要做全面更名時參考。
+- **`src/agent/scheduler_handler.py:7`**（round 3 新發現，範圍外觀察）：模組 docstring 仍寫「sync earnings calendar and refresh Big7/AI news into DynamoDB」，是 `grep -rn "Big7\|Big 7" src/` 目前唯一的殘留命中，與本輪驗收的 `CLAUDE.md`/`README.md`/`market_summary_tool.py` 無關（generator 本輪未觸碰此檔，屬合理範圍界定）。不阻塞，記錄供未來若要徹底清理措辭時一併處理。
 
 ### ✅ What looks good
 - `fetch_stock_quotes()`（`market_summary.py:249-266`）完整複用 `fetch_index_quotes()` 已驗證過的 skip-on-failure 模式（try/except + `current_price` 檢查），風格一致，未重新發明邏輯。
@@ -74,6 +92,6 @@
 - 測試改動全部維持既有 mock 風格（`monkeypatch`、`MagicMock`），無真實外部呼叫，符合專案測試慣例。
 
 ## 結論
-- 是否可合併：**是**（round 2 複驗：🔴 Critical 已確實修復，需求 checklist 全數 ✅，555 passed / 13 既有 sandbox error / 0 failed，無 regression）
+- 是否可合併：**是**（round 3 複驗：文件對齊改動全數與 code 相符，round 2 的 🟡 P2 已修復，555 passed / 13 既有 sandbox error / 0 failed，無 regression，無新增 Critical/P2）
 - 最該先處理的 1–3 件事：
-  1. （P2，可另案，不阻塞）`market_summary_tool.py:18` 的 tool description 措辭更新為不限定 Big 7，避免長期與程式碼行為脫節。
+  1. （🟢 可選，不阻塞）`scheduler_handler.py:7` docstring 殘留「Big7」措辭，範圍外發現，未來另案順手清理即可。

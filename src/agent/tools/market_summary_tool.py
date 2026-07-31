@@ -15,7 +15,7 @@ from __future__ import annotations
 MARKET_SUMMARY_TOOL = {
     "name": "get_market_summary",
     "description": (
-        "Generate today's US stock market summary: Big 7 tech stock news, AI "
+        "Generate today's US stock market summary: major tech stock news, AI "
         "industry news and major index performance, digested into a Traditional "
         "Chinese briefing. Use this for questions about the overall market or "
         "daily market recap — do not guess an index ticker symbol and call "

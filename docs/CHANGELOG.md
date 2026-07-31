@@ -15,10 +15,10 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
-## 2026-07-31 — tech-stock-focus — evaluator — ✅ Pass
+## 2026-07-31 — tech-stock-focus — evaluator — ✅ Pass（round 3：文件對齊追加輪）
 - 連結：docs/qa-reports/tech-stock-focus.md
-- 驗證：Unit 555/568 passed（round 2，13 errors 為既有 sandbox socket bind 限制，與本次改動無關；對照 main baseline 542 passed/13 errors 無 regression）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
-- 備註：循環次數 2；round 1 🔴 1 個（`tools/news.py` `BIG7_ALIASES` 未涵蓋新增 5 檔科技股，`TSM`/`ORCL`/`NFLX`/`AVGO` 真實 headline 過不了 relevance filter）已回送修復並於 round 2 複驗確認解決（`TECH_SYMBOL_ALIASES` 補齊別名 + 測試改用不含裸 ticker 的真實措辭端到端驗證）；未解 🟡 1 個（P2，`market_summary_tool.py` tool description 措辭未更新，非阻塞，可另案）
+- 驗證：Unit 555/568 passed（13 errors 為既有 sandbox socket bind 限制，與本次改動無關；與 round 2 一致，無 regression）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：循環次數 3（round 1 Critical、round 2 已 commit b782201，本輪為未 commit 的追加輪）；本輪改動範圍 `CLAUDE.md`/`README.md`/`market_summary_tool.py`，逐條核對 DynamoDB 表數與 schema（11 表）、TTL 天數、EventBridge 排程（08:00 sync/10:00 notify）、SNS+4 CloudWatch alarms、processor 指令路由、`db/backend.py` singleton 與 NewsTable bucket 借用敘述，皆與 code 相符，`plan.md` 確認不存在；round 2 的 🟡 P2（tool description "Big 7" 措辭）已修復；新增 🟢 範圍外觀察（`scheduler_handler.py:7` docstring 殘留「Big7」，未來另案清理）；無 Critical、無阻塞項
 
 ## 2026-07-31 — earnings-notify-timing — evaluator — ✅ Pass
 - 連結：docs/qa-reports/earnings-notify-timing.md

@@ -1,6 +1,6 @@
 # Stock Earnings Agent
 
-Telegram AI agent that proactively notifies users about US stock earnings calls and answers questions in Traditional Chinese. Powered by Groq (`llama-3.3-70b-versatile`) with tool-use, deployed to AWS Lambda + API Gateway + SQS + DynamoDB via SAM.
+Telegram AI agent for US stock earnings and market updates: proactively pushes earnings reminders and a daily tech-stock market summary to subscribers, and answers questions in Traditional Chinese. Powered by Groq (`llama-3.3-70b-versatile`) with tool-use, deployed to AWS Lambda + API Gateway + SQS + DynamoDB via SAM.
 
 ## Quick start
 
@@ -32,4 +32,4 @@ make set-webhook \
 
 ## Architecture
 
-See [plan.md](plan.md) for the design rationale. Webhook → SQS → Processor decouples Telegram's 60s timeout from Groq's tool-use loop.
+Three Lambdas (single Docker image, differentiated by `ImageConfig.Command`): `webhook` (10s) enqueues each Telegram update to SQS, which decouples Telegram's 60s timeout from Groq's tool-use loop; `processor` (300s) reads off the queue, runs the agent, and replies via the Telegram Bot API; `scheduler` runs on two daily EventBridge schedules (08:00 sync, 10:00 notify, Asia/Taipei) to push earnings reminders and the daily tech-stock market summary to subscribers. State lives in DynamoDB (on-demand billing); AWS SAM (`infra/template.yaml`) provisions all of it.
