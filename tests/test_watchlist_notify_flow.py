@@ -11,14 +11,16 @@ actually persisted data.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 from unittest.mock import MagicMock
 
 from agent import processor_handler, scheduler_handler
 from agent.db.watchlist import DEFAULT_WATCHLIST, remove_from_watchlist
 from agent.tools import _http as tools_http
 
-TOMORROW = (date.today() + timedelta(days=1)).isoformat()
+# `_run()` notifies on earnings releasing within the next 24 hours, keyed by
+# today's (UTC) date — see scheduler_handler._run().
+TARGET_DATE = date.today().isoformat()
 
 
 def _process(chat_id: str, text: str) -> None:
@@ -86,7 +88,7 @@ def test_full_chain_subscribe_watch_sync_notify(local_store, monkeypatch):
 
     _process("111", "/subscribe")
     _process("111", "/watch PLTR")  # PLTR is not in DEFAULT_WATCHLIST
-    fake_finnhub.register("PLTR", [_row("PLTR", TOMORROW)])
+    fake_finnhub.register("PLTR", [_row("PLTR", TARGET_DATE)])
 
     assert scheduler_handler.sync_earnings() == []
 
@@ -102,7 +104,7 @@ def test_full_chain_subscribe_watch_sync_notify(local_store, monkeypatch):
         ).fetchone() is not None
         assert conn.execute(
             "SELECT symbol, earning_date FROM earnings_calendar WHERE symbol = ?", ("PLTR",)
-        ).fetchall() == [("PLTR", TOMORROW)]
+        ).fetchall() == [("PLTR", TARGET_DATE)]
 
     scheduler_handler._run()
 
@@ -116,7 +118,7 @@ def test_full_chain_subscribe_watch_sync_notify(local_store, monkeypatch):
     with sqlite3.connect(local_store) as conn:
         assert conn.execute(
             "SELECT chat_id, symbol, earning_date FROM earnings_notifications"
-        ).fetchall() == [("111", "PLTR", TOMORROW)]
+        ).fetchall() == [("111", "PLTR", TARGET_DATE)]
 
 
 def test_notify_rerun_is_idempotent(local_store, monkeypatch):
@@ -126,7 +128,7 @@ def test_notify_rerun_is_idempotent(local_store, monkeypatch):
 
     _process("111", "/subscribe")
     _process("111", "/watch PLTR")
-    fake_finnhub.register("PLTR", [_row("PLTR", TOMORROW)])
+    fake_finnhub.register("PLTR", [_row("PLTR", TARGET_DATE)])
     scheduler_handler.sync_earnings()
 
     scheduler_handler._run()
@@ -140,7 +142,7 @@ def test_notify_rerun_is_idempotent(local_store, monkeypatch):
     with sqlite3.connect(local_store) as conn:
         assert conn.execute(
             "SELECT chat_id, symbol, earning_date FROM earnings_notifications"
-        ).fetchall() == [("111", "PLTR", TOMORROW)]
+        ).fetchall() == [("111", "PLTR", TARGET_DATE)]
 
 
 def test_per_subscriber_gets_only_own_watched_symbols(local_store, monkeypatch):
@@ -155,8 +157,8 @@ def test_per_subscriber_gets_only_own_watched_symbols(local_store, monkeypatch):
     _process("222", "/subscribe")
     _only_watch("111", "AAPL")
     _only_watch("222", "NVDA")
-    fake_finnhub.register("AAPL", [_row("AAPL", TOMORROW)])
-    fake_finnhub.register("NVDA", [_row("NVDA", TOMORROW)])
+    fake_finnhub.register("AAPL", [_row("AAPL", TARGET_DATE)])
+    fake_finnhub.register("NVDA", [_row("NVDA", TARGET_DATE)])
 
     scheduler_handler.sync_earnings()
     scheduler_handler._run()
@@ -173,7 +175,7 @@ def test_unsubscribed_user_not_notified(local_store, monkeypatch):
     _process("111", "/subscribe")
     _process("111", "/watch AAPL")
     _process("111", "/unsubscribe")
-    fake_finnhub.register("AAPL", [_row("AAPL", TOMORROW)])
+    fake_finnhub.register("AAPL", [_row("AAPL", TARGET_DATE)])
 
     assert scheduler_handler.sync_earnings() == []
     scheduler_handler._run()
@@ -182,7 +184,7 @@ def test_unsubscribed_user_not_notified(local_store, monkeypatch):
     fake_send.assert_not_called()
 
 
-def test_no_earnings_tomorrow_no_push(local_store, monkeypatch):
+def test_no_earnings_today_no_push(local_store, monkeypatch):
     fake_finnhub, fake_send, fake_run_agent = _mocks(monkeypatch)
 
     _process("111", "/subscribe")

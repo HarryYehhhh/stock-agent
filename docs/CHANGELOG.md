@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-31 — earnings-notify-timing — evaluator — ✅ Pass
+- 連結：docs/qa-reports/earnings-notify-timing.md
+- 驗證：Unit pass（542/542 有效測試，`PYTHONPATH=src uv run pytest tests/ -v --confcutdir=tests`；另 13 errors 為 `tests/test_local_integration.py` 既有 sandbox socket bind 限制，與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：修正 scheduler notify 時差 bug——`_run()` 原查 `date.today()+1`（UTC），但 Finnhub 財報日期是美國日期，導致通知比實際發布早近兩天。改為 `_run()` 查 `date.today()`（UTC，此刻已等於美國財報日期），推播文案「明日」與 `COMPANY_PROMPT_TEMPLATE`「明天」措辭同步改為「24 小時內」語意；`_notify_local`/`_company_summary` 參數改名 `tomorrow`→`target_date`；不動 `sync_earnings()` 與 db backend 介面/schema。新增 `test_run_notifies_for_todays_date_not_tomorrow` 明確斷言 `_run()` 以 `date.today().isoformat()`（非 `+1`）呼叫 `_notify_local`；既有三個測試檔日期常數同步改名，斷言邏輯未弱化。grep 全 repo `src/` 無殘留「明日/tomorrow」語意矛盾。🔴 0、🟡 0；循環次數 1；未解 P0/P1 0/0。可合併。
+
 ## 2026-07-31 — processor-news-table-iam — evaluator — ✅ Pass
 - 連結：docs/qa-reports/processor-news-table-iam.md
 - 驗證：Unit pass（541/541 有效測試，`PYTHONPATH=src uv run pytest tests/ -q --ignore=.env --ignore=.env.example`；另 13 errors 為 `tests/test_local_integration.py` 既有 sandbox socket bind 限制，與本次改動無關）；Integration `sam validate --lint` pass；E2E not required；External Smoke not requested（blocking: false）

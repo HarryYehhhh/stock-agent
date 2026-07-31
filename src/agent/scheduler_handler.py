@@ -6,8 +6,9 @@ EventBridge Scheduler events, each invoking `handler()` with a distinct
 - `{"mode": "sync"}` (08:00 Asia/Taipei): fetch/write stages only — sync
   earnings calendar and refresh Big7/AI news into DynamoDB.
 - `{"mode": "notify"}` (10:00 Asia/Taipei): read/notify stages only — push
-  tomorrow's watchlist earnings notifications, then the daily market summary
-  (without re-fetching news; the 08:00 sync already did that).
+  watchlist earnings notifications for earnings releasing within the next 24
+  hours, then the daily market summary (without re-fetching news; the 08:00
+  sync already did that).
 
 A missing or unknown `mode` is a fail-fast: `handler()` raises before running
 any stage, so a scheduler misconfiguration (e.g. a dropped `Input` payload)
@@ -20,7 +21,8 @@ targets instead of a single invocation:
   refresh upcoming earnings for all active subscribers' watchlist symbols into
   the sqlite earnings_calendar cache.
 - notify (`python -m agent.scheduler_handler` / `make notify-earnings`): read
-  tomorrow's earnings from sqlite only (warns when the cache looks stale),
+  from sqlite only the earnings releasing within the next 24 hours (warns
+  when the cache looks stale),
   generate one Groq summary per reporting company cached in company_summaries,
   then compose each subscriber's push from those cached blocks — Groq is
   called at most once per company, not once per subscriber.
@@ -89,12 +91,12 @@ def _stale_banner(earnings: list[dict]) -> str:
     )
 
 
-def _company_summary(backend, row: dict, tomorrow: str) -> str:
+def _company_summary(backend, row: dict, target_date: str) -> str:
     """Return the cached Groq summary for this company's earnings, generating
     and caching it on first use. Falls back to raw data (uncached, so the next
     run retries) if generation fails."""
     symbol = row["symbol"]
-    cached = backend.get_company_summary(symbol, tomorrow)
+    cached = backend.get_company_summary(symbol, target_date)
     if cached:
         return cached
 
@@ -102,7 +104,7 @@ def _company_summary(backend, row: dict, tomorrow: str) -> str:
     try:
         summary = run_agent(
             COMPANY_PROMPT_TEMPLATE.format(
-                tomorrow=tomorrow,
+                target_date=target_date,
                 symbol=symbol,
                 row=data,
             ),
@@ -117,15 +119,15 @@ def _company_summary(backend, row: dict, tomorrow: str) -> str:
             f"營收預期 {row.get('revenue_estimate') or '未知'}"
             "（摘要生成失敗，顯示原始資料）"
         )
-    backend.upsert_company_summary(symbol, tomorrow, summary)
+    backend.upsert_company_summary(symbol, target_date, summary)
     return summary
 
 
-def _notify_local(tomorrow: str) -> None:
+def _notify_local(target_date: str) -> None:
     backend = get_backend()
-    earnings = backend.get_watchlist_earnings_for_date(tomorrow)
+    earnings = backend.get_watchlist_earnings_for_date(target_date)
     if not earnings:
-        logger.info("no watchlist earnings tomorrow, skip push")
+        logger.info("no watchlist earnings within 24 hours, skip push")
         return
 
     banner = _stale_banner(earnings) if _is_stale(earnings) else ""
@@ -137,17 +139,17 @@ def _notify_local(tomorrow: str) -> None:
     for chat_id, rows in by_chat.items():
         chat_id = str(chat_id)
         symbols = [row["symbol"] for row in rows]
-        pending_symbols = backend.unnotified_symbols(chat_id, symbols, tomorrow)
+        pending_symbols = backend.unnotified_symbols(chat_id, symbols, target_date)
         if not pending_symbols:
             continue
 
         blocks = [
-            _company_summary(backend, row, tomorrow)
+            _company_summary(backend, row, target_date)
             for row in rows
             if row["symbol"] in pending_symbols
         ]
         body = (
-            f"{banner}📊 *明日追蹤清單財報提醒（{tomorrow}）*\n\n"
+            f"{banner}📊 *即將發布財報提醒（{target_date}）*\n\n"
             + "\n\n".join(blocks)
         )
 
@@ -156,12 +158,12 @@ def _notify_local(tomorrow: str) -> None:
         except Exception:
             logger.exception("failed to push to %s", chat_id)
             continue
-        backend.mark_notified(chat_id, pending_symbols, tomorrow)
+        backend.mark_notified(chat_id, pending_symbols, target_date)
 
 
 def _run() -> None:
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
-    _notify_local(tomorrow)
+    target_date = date.today().isoformat()
+    _notify_local(target_date)
 
 
 def _run_sync() -> None:
