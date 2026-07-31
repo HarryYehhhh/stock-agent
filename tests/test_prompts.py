@@ -36,28 +36,39 @@ def test_summary_system_prompt_period_wording():
     assert "今日總結" not in prompt
 
 
-# Frozen verbatim copy of the pre-sprint/summary-timewindow SUMMARY_SYSTEM_PROMPT
-# constant (git show HEAD~N:src/agent/prompts.py before this change). Production's
-# daily cron (push_daily_summary) always calls generate_market_summary(days_back=1)
-# and pushes the result unmodified to subscribers, so days_back=1 wording must stay
-# byte-for-byte identical to this baseline.
+# Frozen verbatim copy of the SUMMARY_SYSTEM_PROMPT constant (tech-stock-focus
+# sprint: Big 7 -> 科技股焦點, no volume-based selection criterion, wording no
+# longer scoped to Big 7 news). Production's daily cron (push_daily_summary)
+# always calls generate_market_summary(days_back=1) and pushes the result
+# unmodified to subscribers, so days_back=1 wording must stay byte-for-byte
+# identical to this baseline.
 _OLD_SUMMARY_SYSTEM_PROMPT = (
     "你是美股科技板塊的資深分析師，負責撰寫每日市場摘要。"
     "一律使用繁體中文。"
-    "你會收到大盤指數收盤數據，以及一批本日發布的英文新聞"
-    "（Big 7 科技股個股新聞與 AI 產業新聞）。"
-    "挑選最重要的三則新聞，寫出摘要。"
+    "你會收到大盤指數收盤數據、科技股個股報價（收盤價與漲跌幅），"
+    "以及一批本日發布的英文新聞"
+    "（主要科技股個股新聞與 AI 產業新聞）。"
     "不要逐條翻譯新聞，而是歸納整合：把相同主題的多則新聞合併成一個觀點，"
     "指出事件對個股與 AI 產業的影響，並過濾掉無關緊要的內容。"
     "輸出格式使用 Telegram Markdown（粗體寫成 *text*，不要使用 ** 或 __），結構如下：\n"
-    "*📊 Big 7 動態* — 依重要性整理各公司關鍵事件，每家最多 2-3 句\n"
-    "*🤖 AI 產業焦點* — 整理 AI 相關趨勢與重大消息\n"
-    "*💡 今日總結* — 結合大盤指數漲跌與新聞，2-3 句話做簡短市場分析，"
-    "總結整體市場方向與值得關注的重點"
+    "*📈 科技股焦點* — 只挑當日漲跌幅最顯著的 2-4 檔（優先 |漲跌幅| ≥ 2%），"
+    "每檔以「公司名（代號） $價格 +X.X%」開頭，"
+    "接著 2-3 句說明價格變動背後的原因，並帶出賣方分析師或機構的論述多空理由。"
+    "價格與分析師觀點一律只能引用輸入資料中實際出現的內容，"
+    "沒有就不要寫，嚴禁自行推估數字。\n"
+    "*🤖 AI 產業焦點* — 只寫當日真正有份量的消息（模型發布、資本支出與算力投資、"
+    "晶片供應、監管政策、重大合作或併購），"
+    "若當日沒有達到此標準的消息，整段直接略過不輸出，不要為了填版面而寫軟性內容。\n"
+    "*💡 今日總結* — 結合大盤指數漲跌、個股表現與新聞，寫 3-4 句市場分析。"
+    "需明確點出當日影響風險偏好的總經因素（聯準會利率預期與官員談話、CPI/PCE 通膨數據、"
+    "非農就業、10 年期公債殖利率、美元指數、油價、關稅與地緣政治等），"
+    "說明這些因素如何放大或抵銷科技股的個別題材，"
+    "最後總結整體市場方向與後續值得關注的觀察點。"
+    "總經因素若無當日數據可佐證，只陳述已知事實與市場既有定價，不要編造數據。"
 )
 
 
-def test_summary_system_prompt_days_back_1_is_byte_for_byte_identical_to_pre_sprint_baseline():
+def test_summary_system_prompt_days_back_1_is_byte_for_byte_identical_to_baseline():
     assert prompts.summary_system_prompt(1) == _OLD_SUMMARY_SYSTEM_PROMPT
     assert prompts.summary_system_prompt() == _OLD_SUMMARY_SYSTEM_PROMPT
 
@@ -68,6 +79,14 @@ def test_summary_system_prompt_period_wording_requires_daily_index_label():
 
     assert "當日" in prompt
     assert "不得表述成整段期間的變化" in prompt
+
+
+def test_summary_system_prompt_has_no_volume_selection_criterion():
+    """Finnhub 免費版 /quote 沒有成交量欄位，選股條件不得要求「成交量明顯放大」。"""
+    prompt = prompts.summary_system_prompt(1)
+
+    assert "成交量" not in prompt
+    assert "Big 7" not in prompt
 
 
 # 以下三則測試對應 ADR-0009 拆遷表 S11/S14/S15/S20：這些規則已從

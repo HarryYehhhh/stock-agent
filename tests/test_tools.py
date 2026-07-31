@@ -398,6 +398,13 @@ def test_news_all_real_returns_unfiltered(mock_http):
         ("META", "Meta reports strong ad growth"),
         ("META", "Facebook parent company raises guidance"),
         ("TSLA", "Tesla recalls 50,000 vehicles over battery defect"),
+        ("AVGO", "Broadcom unveils new AI chip"),
+        ("AMD", "Advanced Micro Devices unveils next-gen data center chip"),
+        ("AMD", "AMD shares climb after earnings beat"),
+        ("TSM", "TSMC posts record quarterly profit"),
+        ("TSM", "Taiwan Semiconductor raises capex guidance"),
+        ("ORCL", "Oracle wins major cloud contract"),
+        ("NFLX", "Netflix beats subscriber estimates"),
     ],
 )
 def test_is_headline_relevant_matches_ticker_or_alias(symbol, headline):
@@ -427,8 +434,9 @@ def test_is_headline_relevant_handles_empty_and_none():
 
 
 def test_is_headline_relevant_unknown_symbol_falls_back_to_ticker_match():
-    assert news.is_headline_relevant("NFLX", "Netflix subscriber growth beats estimates") is False
-    assert news.is_headline_relevant("NFLX", "NFLX shares rise after earnings beat") is True
+    # IBM is not in TECH_SYMBOL_ALIASES, so only the bare ticker matches.
+    assert news.is_headline_relevant("IBM", "International Business Machines posts profit") is False
+    assert news.is_headline_relevant("IBM", "IBM shares rise after earnings beat") is True
 
 
 # --- quote ---

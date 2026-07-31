@@ -231,7 +231,7 @@ def test_rest_market_summary_refreshes_and_generates_summary(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["stored_news"] == len(market_summary.BIG7) + 1  # 7 big7 + 1 AI item
+    assert body["stored_news"] == len(market_summary.TECH_SYMBOLS) + 1  # N tech symbols + 1 AI item
     assert body["summary"].endswith("摘要內容")
     assert "summary_id" in body
 

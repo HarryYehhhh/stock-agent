@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-07-31 — tech-stock-focus — evaluator — ✅ Pass
+- 連結：docs/qa-reports/tech-stock-focus.md
+- 驗證：Unit 555/568 passed（round 2，13 errors 為既有 sandbox socket bind 限制，與本次改動無關；對照 main baseline 542 passed/13 errors 無 regression）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：循環次數 2；round 1 🔴 1 個（`tools/news.py` `BIG7_ALIASES` 未涵蓋新增 5 檔科技股，`TSM`/`ORCL`/`NFLX`/`AVGO` 真實 headline 過不了 relevance filter）已回送修復並於 round 2 複驗確認解決（`TECH_SYMBOL_ALIASES` 補齊別名 + 測試改用不含裸 ticker 的真實措辭端到端驗證）；未解 🟡 1 個（P2，`market_summary_tool.py` tool description 措辭未更新，非阻塞，可另案）
+
 ## 2026-07-31 — earnings-notify-timing — evaluator — ✅ Pass
 - 連結：docs/qa-reports/earnings-notify-timing.md
 - 驗證：Unit pass（542/542 有效測試，`PYTHONPATH=src uv run pytest tests/ -v --confcutdir=tests`；另 13 errors 為 `tests/test_local_integration.py` 既有 sandbox socket bind 限制，與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）

@@ -1,4 +1,4 @@
-"""Daily market summary: Big 7 tech stocks + AI industry news, digested by Groq.
+"""Daily market summary: tech stocks + AI industry news, digested by Groq.
 
 Flow: fetch raw English news from Finnhub and store it in the local SQLite
 store (`news` table), then read the stored news back and ask the model to
@@ -33,7 +33,10 @@ from agent.tools.quote import get_quote
 
 log = Logger()
 
-BIG7 = ["AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA"]
+TECH_SYMBOLS = [
+    "AAPL", "MSFT", "GOOGL", "AMZN", "NVDA", "META", "TSLA",
+    "AVGO", "AMD", "TSM", "ORCL", "NFLX",
+]
 
 # Finnhub free tier has no index quotes (^GSPC etc. need a paid plan),
 # so we track the standard ETF proxies instead.
@@ -46,7 +49,7 @@ INDEXES = [
 
 MAX_STORE_PER_SYMBOL = 10
 MAX_STORE_AI = 15
-MAX_NEWS_PER_SYMBOL = 3
+MAX_NEWS_PER_SYMBOL = 2
 MAX_AI_NEWS = 8
 MAX_SUMMARY_CHARS = 300
 
@@ -122,14 +125,14 @@ def _is_trading_day(ny_date: date) -> bool:
 
 
 def refresh_news(days_back: int = 1) -> int:
-    """Fetch Big 7 company news and AI-related tech news from Finnhub into
-    the local store. Returns the number of newly inserted rows (duplicates
-    by headline are ignored)."""
+    """Fetch tech stock company news and AI-related tech news from Finnhub
+    into the local store. Returns the number of newly inserted rows
+    (duplicates by headline are ignored)."""
     date_from = _date_from(days_back)
     date_to = date.today().isoformat()
 
     items: list[dict] = []
-    for symbol in BIG7:
+    for symbol in TECH_SYMBOLS:
         try:
             fetched = _fetch_company_news(symbol, date_from, date_to)
         except Exception as e:
@@ -194,7 +197,7 @@ def list_stored_news(days_back: int = 1) -> list[dict]:
 
 def select_news(days_back: int = 1) -> dict:
     """Pick the news rows to feed the model: newest MAX_NEWS_PER_SYMBOL per
-    Big 7 symbol plus newest MAX_AI_NEWS AI items."""
+    tech symbol plus newest MAX_AI_NEWS AI items."""
     rows = list_stored_news(days_back)
     per_symbol: dict[str, int] = {}
     big7: list[dict] = []
@@ -243,6 +246,26 @@ def fetch_index_quotes() -> list[dict]:
     return quotes
 
 
+def fetch_stock_quotes(symbols: list[str]) -> list[dict]:
+    """Latest close and percent change for each of `symbols`. Symbols that
+    fail to fetch, or have no current_price, are skipped."""
+    quotes = []
+    for symbol in symbols:
+        try:
+            q = get_quote(symbol)
+        except Exception as e:
+            log.warning("stock quote fetch failed for %s: %s", symbol, e)
+            continue
+        if not q.get("current_price"):
+            continue
+        quotes.append({
+            "symbol": symbol,
+            "close": q["current_price"],
+            "change_percent": q["change_percent"],
+        })
+    return quotes
+
+
 def _format_index_block(quotes: list[dict]) -> str:
     lines = ["*📈 大盤收盤指標*（ETF 代理）"]
     for q in quotes:
@@ -255,7 +278,7 @@ def _format_index_block(quotes: list[dict]) -> str:
 
 
 def _format_news_block(news: dict) -> str:
-    lines = ["[Big 7 個股新聞]"]
+    lines = ["[科技股個股新聞]"]
     for it in news["big7"]:
         lines.append(f"- ({it['symbol']}) {it['headline']}: {it['summary']}")
     lines.append("\n[AI 產業新聞]")
@@ -287,7 +310,7 @@ def generate_market_summary(days_back: int = 1) -> dict:
     if not news["big7"] and not news["ai"]:
         indexes = fetch_index_quotes()
         index_block = _format_index_block(indexes) if indexes else ""
-        summary = "本地儲存中沒有這個區間的 Big 7 或 AI 新聞，請先執行新聞抓取。"
+        summary = "本地儲存中沒有這個區間的科技股或 AI 新聞，請先執行新聞抓取。"
         if index_block:
             summary = f"{index_block}\n\n{summary}"
         return {"summary": summary, "news": news, "indexes": indexes, "date_range": date_range}
@@ -316,6 +339,11 @@ def generate_market_summary(days_back: int = 1) -> dict:
         f"- {q['name']} ({q['symbol']}): 收盤 {q['close']}, 漲跌 {q['change_percent']:+.2f}%"
         for q in indexes
     ) or "（大盤數據暫時無法取得）"
+    stock_quotes = fetch_stock_quotes(TECH_SYMBOLS)
+    stock_lines = "\n".join(
+        f"- {q['symbol']}: 收盤 {q['close']}, 漲跌 {q['change_percent']:+.2f}%"
+        for q in stock_quotes
+    ) or "（個股報價暫時無法取得）"
     # days_back<=1 keeps the original user_content verbatim (production's
     # daily cron always calls this with days_back=1 via push_daily_summary
     # and pushes the result unmodified to subscribers); days_back>1 adds an
@@ -334,9 +362,10 @@ def generate_market_summary(days_back: int = 1) -> dict:
         index_label = "[大盤收盤（當日漲跌）]"
     user_content = (
         f"今天日期是 {date.today().isoformat()}。"
-        f"以下是大盤收盤數據與過去 {days_back} 天的新聞資料{coverage_clause}，"
+        f"以下是大盤收盤數據、科技股個股報價與過去 {days_back} 天的新聞資料{coverage_clause}，"
         f"請產出{period_desc}市場摘要：\n\n"
         f"{index_label}\n{index_lines}\n\n"
+        f"[科技股個股報價]\n{stock_lines}\n\n"
         f"{_format_news_block(news)}"
     )
     response = _client().chat.completions.create(
@@ -370,7 +399,7 @@ def generate_market_summary(days_back: int = 1) -> dict:
 
 
 def push_daily_summary(refresh: bool = True) -> None:
-    """CLI/cron entry: optionally refresh Big 7 / AI news, generate the daily
+    """CLI/cron entry: optionally refresh tech stock / AI news, generate the daily
     summary, then push it to every active subscriber not already notified for
     today. Skips the push (but still generates) when there is no news to
     summarize. A single subscriber's send failure does not stop the others

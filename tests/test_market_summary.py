@@ -67,10 +67,16 @@ QUOTES = {
     "IWM": {"current_price": 292.31, "change_percent": -0.5884},
 }
 
+STOCK_QUOTES = {
+    symbol: {"current_price": 100.0 + i, "change_percent": 1.0 + i * 0.1}
+    for i, symbol in enumerate(ms.TECH_SYMBOLS)
+}
+
 
 @pytest.fixture
 def mock_quotes(monkeypatch):
-    monkeypatch.setattr(ms, "get_quote", lambda symbol: dict(QUOTES[symbol]))
+    all_quotes = {**QUOTES, **STOCK_QUOTES}
+    monkeypatch.setattr(ms, "get_quote", lambda symbol: dict(all_quotes[symbol]))
 
 
 # ---------------------------------------------------------------------------
@@ -168,9 +174,10 @@ def test_ai_pattern_word_boundary():
 def test_refresh_news_stores_and_dedupes(local_store, mock_finnhub):
     inserted = ms.refresh_news(days_back=1)
 
-    # 7 symbols × (1 shared + 5 unique) minus 6 shared dups, plus 1 AI item
+    # N symbols × (1 shared + 5 unique) minus (N-1) shared dups, plus 1 AI item
     # (shared tech headline deduped, non-AI headline filtered out)
-    assert inserted == 7 * 5 + 1 + 1
+    n = len(ms.TECH_SYMBOLS)
+    assert inserted == n * 5 + 1 + 1
 
     with sqlite3.connect(local_store) as conn:
         headlines = [r[0] for r in conn.execute("SELECT headline FROM news").fetchall()]
@@ -291,8 +298,42 @@ def test_select_news_caps(local_store, mock_finnhub):
 
     assert len(news["ai"]) == 1
     symbols = [n["symbol"] for n in news["big7"]]
-    for symbol in ms.BIG7:
+    for symbol in ms.TECH_SYMBOLS:
         assert symbols.count(symbol) <= ms.MAX_NEWS_PER_SYMBOL
+
+
+def test_select_news_covers_the_new_tech_symbols_beyond_the_original_big7(local_store, monkeypatch):
+    """Regression: the tracked list expanded from Big 7 to 12 tech symbols
+    (AVGO, AMD, TSM, ORCL, NFLX added) — their news must flow through
+    refresh_news/select_news the same as the original 7.
+
+    Headlines here deliberately use realistic company-name-only wording (no
+    bare ticker), matching how Finnhub headlines actually read for these
+    companies (e.g. "Broadcom", "TSMC" — not "AVGO"/"TSM"). A bare-ticker
+    mock headline would pass even if TECH_SYMBOL_ALIASES were missing the
+    company alias, silently hiding a regression where is_headline_relevant()
+    filters out real-world headlines for the new symbols."""
+    REAL_HEADLINES = {
+        "AVGO": "Broadcom unveils new AI chip",
+        "AMD": "Advanced Micro Devices unveils next-gen data center chip",
+        "TSM": "TSMC posts record quarterly profit",
+        "ORCL": "Oracle wins major cloud contract",
+        "NFLX": "Netflix beats subscriber estimates",
+    }
+
+    def fake_company_news(symbol, date_from, date_to):
+        headline = REAL_HEADLINES.get(symbol, f"{symbol} reports quarterly results")
+        return [{"headline": headline, "summary": "s", "datetime": 1_800_000_000}]
+
+    monkeypatch.setattr(ms, "_fetch_company_news", fake_company_news)
+    monkeypatch.setattr(ms, "_fetch_tech_news", lambda: [])
+
+    ms.refresh_news(days_back=1)
+    news = ms.select_news(days_back=1)
+
+    symbols = {n["symbol"] for n in news["big7"]}
+    for new_symbol in REAL_HEADLINES:
+        assert new_symbol in symbols
 
 
 def test_fetch_index_quotes_skips_failures(monkeypatch):
@@ -310,6 +351,38 @@ def test_fetch_index_quotes_skips_failures(monkeypatch):
     assert quotes[0] == {
         "name": "S&P 500", "symbol": "SPY", "close": 742.09, "change_percent": -0.16,
     }
+
+
+def test_fetch_stock_quotes_skips_failures(monkeypatch, caplog):
+    """A single symbol's quote fetch failing (or returning no current_price)
+    must not abort the rest — it's skipped and the others still come back."""
+
+    def flaky_quote(symbol):
+        if symbol == "AMD":
+            raise RuntimeError("finnhub down")
+        if symbol == "TSM":
+            return {"current_price": 0, "change_percent": None}
+        return {"current_price": 213.25, "change_percent": 1.32}
+
+    monkeypatch.setattr(ms, "get_quote", flaky_quote)
+
+    with caplog.at_level(logging.WARNING):
+        quotes = ms.fetch_stock_quotes(["AAPL", "AMD", "TSM", "MSFT"])
+
+    assert [q["symbol"] for q in quotes] == ["AAPL", "MSFT"]
+    assert quotes[0] == {"symbol": "AAPL", "close": 213.25, "change_percent": 1.32}
+    assert any("stock quote fetch failed for AMD" in r.message for r in caplog.records)
+
+
+def test_fetch_stock_quotes_covers_all_12_tech_symbols(monkeypatch):
+    monkeypatch.setattr(
+        ms, "get_quote", lambda symbol: {"current_price": 100.0, "change_percent": 1.0}
+    )
+
+    quotes = ms.fetch_stock_quotes(ms.TECH_SYMBOLS)
+
+    assert len(ms.TECH_SYMBOLS) == 12
+    assert [q["symbol"] for q in quotes] == ms.TECH_SYMBOLS
 
 
 def test_format_index_block():
@@ -362,6 +435,8 @@ def test_generate_summary_reads_store_and_persists(
     assert "每日市場摘要" in messages[0]["content"]
     assert "[大盤收盤]" in messages[1]["content"]
     assert "S&P 500 (SPY): 收盤 742.09, 漲跌 -0.16%" in messages[1]["content"]
+    assert "[科技股個股報價]" in messages[1]["content"]
+    assert "- AAPL: 收盤 100.0, 漲跌 +1.00%" in messages[1]["content"]
     assert "AAPL story 0" in messages[1]["content"]
     assert "New AI model launched" in messages[1]["content"]
     # days_back=1 must not carry the multi-day coverage note (production's
@@ -381,13 +456,53 @@ def test_generate_summary_reads_store_and_persists(
     assert stored_ids == expected_ids
 
 
-def test_generate_summary_days_back_1_user_content_is_byte_for_byte_identical_to_pre_sprint_baseline(
+def test_generate_summary_user_content_includes_all_12_stock_quotes(
+    local_store, mock_finnhub, mock_groq, mock_quotes
+):
+    ms.refresh_news(days_back=1)
+    mock_groq.chat.completions.create.return_value = _text_response("摘要內容")
+
+    ms.generate_market_summary(days_back=1)
+
+    content = mock_groq.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+    assert "[科技股個股報價]" in content
+    for i, symbol in enumerate(ms.TECH_SYMBOLS):
+        close = 100.0 + i
+        change = 1.0 + i * 0.1
+        assert f"- {symbol}: 收盤 {close}, 漲跌 {change:+.2f}%" in content
+
+
+def test_generate_summary_skips_a_single_failed_stock_quote_without_aborting(
+    local_store, mock_finnhub, mock_groq, monkeypatch
+):
+    """A single symbol's quote fetch failing must not prevent the summary
+    from being generated — that symbol is simply omitted from the block."""
+
+    def flaky_quote(symbol):
+        if symbol == "AMD":
+            raise RuntimeError("finnhub down")
+        return {"current_price": 100.0, "change_percent": 1.0}
+
+    monkeypatch.setattr(ms, "get_quote", flaky_quote)
+    ms.refresh_news(days_back=1)
+    mock_groq.chat.completions.create.return_value = _text_response("摘要內容")
+
+    out = ms.generate_market_summary(days_back=1)
+
+    content = mock_groq.chat.completions.create.call_args.kwargs["messages"][1]["content"]
+    assert out["summary"].endswith("摘要內容")
+    assert "- AMD:" not in content
+    assert "- AAPL: 收盤 100.0, 漲跌 +1.00%" in content
+
+
+def test_generate_summary_days_back_1_user_content_is_byte_for_byte_identical_to_baseline(
     local_store, mock_finnhub, mock_groq, mock_quotes
 ):
     """Production's daily cron (push_daily_summary) always calls this with
     days_back=1 and pushes the result unmodified to subscribers, so the
     days_back=1 user_content sent to Groq must stay byte-for-byte identical
-    to the pre-sprint/summary-timewindow baseline (no date-range note)."""
+    to this baseline (index block + per-stock quote block + news, no
+    date-range note)."""
     from datetime import date as date_cls
 
     ms.refresh_news(days_back=1)
@@ -400,11 +515,16 @@ def test_generate_summary_days_back_1_user_content_is_byte_for_byte_identical_to
         f"- {q['name']} ({q['symbol']}): 收盤 {q['close']}, 漲跌 {q['change_percent']:+.2f}%"
         for q in ms.fetch_index_quotes()
     )
+    stock_lines = "\n".join(
+        f"- {q['symbol']}: 收盤 {q['close']}, 漲跌 {q['change_percent']:+.2f}%"
+        for q in ms.fetch_stock_quotes(ms.TECH_SYMBOLS)
+    )
     news = ms.select_news(days_back=1)
     expected_user_content = (
         f"今天日期是 {date_cls.today().isoformat()}。"
-        f"以下是大盤收盤數據與過去 1 天的新聞資料，請產出每日市場摘要：\n\n"
+        f"以下是大盤收盤數據、科技股個股報價與過去 1 天的新聞資料，請產出每日市場摘要：\n\n"
         f"[大盤收盤]\n{index_lines}\n\n"
+        f"[科技股個股報價]\n{stock_lines}\n\n"
         f"{ms._format_news_block(news)}"
     )
     assert messages[1]["content"] == expected_user_content
