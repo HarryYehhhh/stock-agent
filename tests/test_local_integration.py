@@ -111,11 +111,13 @@ def test_processor_subscribe_and_scheduler_share_local_store(local_store, monkey
     fake_send = MagicMock()
     monkeypatch.setattr(processor_handler, "send_message", fake_send)
     monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
-    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    # `_run()` notifies on earnings releasing within the next 24 hours, keyed
+    # by today's (UTC) date — see scheduler_handler._run().
+    today = date.today().isoformat()
 
     def fake_earnings(*_, symbol):
         # Mimics the real tool: persists fetched rows into the local store.
-        items = [{"symbol": symbol, "date": tomorrow}] if symbol == "AAPL" else []
+        items = [{"symbol": symbol, "date": today}] if symbol == "AAPL" else []
         get_backend().upsert_earnings_calendar(items)
         return items
 

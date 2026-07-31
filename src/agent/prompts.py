@@ -100,7 +100,7 @@ def watchlist_context(symbols: list[str]) -> str:
 
 
 COMPANY_PROMPT_TEMPLATE = (
-    "明天（{tomorrow}）{symbol}將公布財報，快取資料：{row}\n\n"
+    "{symbol}將於 24 小時內（{target_date}）公布財報，快取資料：{row}\n\n"
     "請用繁體中文寫 2-3 句的財報前瞻摘要：財報時間（盤前/盤後/盤中）、"
     "分析師 EPS 預期與營收預期，以及一句該公司近期值得注意的重點。"
     "輸出使用 Telegram Markdown（粗體寫成 *text*，不要使用 ** 或 __），"

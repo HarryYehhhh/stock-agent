@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date, timedelta
+from datetime import date
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +20,9 @@ class _Ctx:
 
 CTX = _Ctx()
 
-TOMORROW = (date.today() + timedelta(days=1)).isoformat()
+# `_run()` notifies on earnings releasing within the next 24 hours, keyed by
+# today's (UTC) date — see scheduler_handler._run().
+TARGET_DATE = date.today().isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +119,7 @@ def _seed_earnings(symbols: list[str]) -> None:
         [
             {
                 "symbol": symbol,
-                "date": TOMORROW,
+                "date": TARGET_DATE,
                 "hour": "amc",
                 "epsEstimate": 1.4,
                 "revenueEstimate": 82000000000,
@@ -171,6 +173,19 @@ def test_sync_earnings_collects_failures(local_mocks, monkeypatch):
     assert scheduler_handler.sync_earnings() == ["AAPL"]
 
 
+def test_run_notifies_for_todays_date_not_tomorrow(monkeypatch):
+    """Regression: earnings dates from Finnhub are US-calendar dates. At the
+    10:00 Asia/Taipei notify run (UTC 02:00), `date.today()` in UTC already
+    equals the US earnings date, so `_run()` must query today's date, not
+    tomorrow's — querying +1 day pushed notifications ~2 days too early."""
+    fake_notify_local = MagicMock()
+    monkeypatch.setattr(scheduler_handler, "_notify_local", fake_notify_local)
+
+    scheduler_handler._run()
+
+    fake_notify_local.assert_called_once_with(date.today().isoformat())
+
+
 def test_local_notify_reads_sqlite_only_and_is_idempotent(local_mocks):
     _seed_earnings(["AAPL"])
 
@@ -208,7 +223,7 @@ def test_local_company_summary_cached_across_subscribers(local_mocks, local_stor
         rows = conn.execute(
             "SELECT symbol, earning_date, summary FROM company_summaries"
         ).fetchall()
-    assert rows == [("AAPL", TOMORROW, "*AAPL* 財報摘要")]
+    assert rows == [("AAPL", TARGET_DATE, "*AAPL* 財報摘要")]
 
 
 def test_local_warns_when_cache_is_stale(local_mocks, local_store):
