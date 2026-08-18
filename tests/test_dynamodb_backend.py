@@ -95,6 +95,51 @@ def test_dynamodb_earnings_calendar_omits_none_estimates(aws):
     assert rows[0]["revenue_estimate"] is None
 
 
+def test_dynamodb_delete_earnings_calendar_except_removes_stale_rows(aws):
+    """Regression: Finnhub moving a company's earnings date (e.g. CRCL cached
+    for 8/18, later rescheduled to 8/5) must not leave the old date's row
+    behind until its 45-day TTL expires — that stale row triggers a false
+    earnings-reminder push."""
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.add_to_watchlist("111", "CRCL")
+    # Old cached row (from an earlier sync, before Finnhub moved the date).
+    backend.upsert_earnings_calendar([{"symbol": "CRCL", "date": "2026-08-18", "hour": "amc"}])
+    # Latest Finnhub fetch: the earnings date moved to 8/5.
+    backend.upsert_earnings_calendar([{"symbol": "CRCL", "date": "2026-08-05", "hour": "amc"}])
+
+    backend.delete_earnings_calendar_except(
+        "CRCL", keep_dates=["2026-08-05"], date_from="2026-08-05"
+    )
+
+    rows = backend.get_chat_watchlist_earnings("111", "2026-01-01", "2026-12-31")
+    assert [row["earning_date"] for row in rows] == ["2026-08-05"]
+
+
+def test_dynamodb_delete_earnings_calendar_except_keeps_past_and_other_symbol_rows(aws):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.add_to_watchlist("111", "CRCL")
+    backend.add_to_watchlist("111", "AAPL")
+    backend.upsert_earnings_calendar(
+        [
+            {"symbol": "CRCL", "date": "2026-08-01", "hour": "amc"},  # past, untouched
+            {"symbol": "CRCL", "date": "2026-08-05", "hour": "amc"},  # current, kept
+            {"symbol": "AAPL", "date": "2026-08-18", "hour": "amc"},  # other symbol, untouched
+        ]
+    )
+
+    backend.delete_earnings_calendar_except(
+        "CRCL", keep_dates=["2026-08-05"], date_from="2026-08-18"
+    )
+
+    rows = backend.get_chat_watchlist_earnings("111", "2026-01-01", "2026-12-31")
+    got = {(row["symbol"], row["earning_date"]) for row in rows}
+    assert got == {("CRCL", "2026-08-01"), ("CRCL", "2026-08-05"), ("AAPL", "2026-08-18")}
+
+
 def test_dynamodb_watchlist_earnings_date_range_boundaries(aws):
     """earning_date outside [date_from, date_to] must be excluded; boundaries are inclusive."""
     from agent.db.backend import get_backend

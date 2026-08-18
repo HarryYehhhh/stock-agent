@@ -32,7 +32,7 @@ def test_list_prints_table_for_saved_traces(local_store, capsys):
             "total_ms": 100,
             "outcome": "completed",
             "reply_char_count": 20,
-            "model": "llama-3.3-70b-versatile",
+            "model": "openai/gpt-oss-120b",
             "ttl": 1234567890,
             "bucket": "trace",
         }
@@ -72,7 +72,7 @@ def test_list_json_outputs_full_record(local_store, capsys):
             "total_ms": 100,
             "outcome": "completed",
             "reply_char_count": 20,
-            "model": "llama-3.3-70b-versatile",
+            "model": "openai/gpt-oss-120b",
             "ttl": 1234567890,
             "bucket": "trace",
         }
@@ -107,7 +107,7 @@ def test_list_chat_id_filter(local_store, capsys):
                 "total_ms": 0,
                 "outcome": "completed",
                 "reply_char_count": 0,
-                "model": "llama-3.3-70b-versatile",
+                "model": "openai/gpt-oss-120b",
                 "ttl": 1234567890,
                 "bucket": "trace",
             }

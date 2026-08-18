@@ -109,6 +109,57 @@ def test_local_backend_upserts_earnings_calendar(local_store):
     assert updated_at is not None
 
 
+def test_local_delete_earnings_calendar_except_removes_stale_rows(local_store):
+    """Regression: Finnhub moving a company's earnings date (e.g. CRCL cached
+    for 8/18, later rescheduled to 8/5) must not leave the old date's row
+    behind until its 45-day TTL expires — that stale row triggers a false
+    earnings-reminder push."""
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    # Old cached row (from an earlier sync, before Finnhub moved the date).
+    backend.upsert_earnings_calendar([{"symbol": "CRCL", "date": "2026-08-18", "hour": "amc"}])
+    # Latest Finnhub fetch: the earnings date moved to 8/5.
+    backend.upsert_earnings_calendar([{"symbol": "CRCL", "date": "2026-08-05", "hour": "amc"}])
+
+    backend.delete_earnings_calendar_except(
+        "CRCL", keep_dates=["2026-08-05"], date_from="2026-08-05"
+    )
+
+    with sqlite3.connect(local_store) as conn:
+        rows = {
+            row[0]
+            for row in conn.execute(
+                "SELECT earning_date FROM earnings_calendar WHERE symbol = 'CRCL'"
+            )
+        }
+    assert rows == {"2026-08-05"}
+
+
+def test_local_delete_earnings_calendar_except_keeps_past_and_current_rows(local_store):
+    from agent.db.backend import get_backend
+
+    backend = get_backend()
+    backend.upsert_earnings_calendar(
+        [
+            {"symbol": "CRCL", "date": "2026-08-01", "hour": "amc"},  # past, untouched
+            {"symbol": "CRCL", "date": "2026-08-05", "hour": "amc"},  # current, kept
+            {"symbol": "AAPL", "date": "2026-08-18", "hour": "amc"},  # other symbol, untouched
+        ]
+    )
+
+    backend.delete_earnings_calendar_except(
+        "CRCL", keep_dates=["2026-08-05"], date_from="2026-08-18"
+    )
+
+    with sqlite3.connect(local_store) as conn:
+        rows = {
+            (row[0], row[1])
+            for row in conn.execute("SELECT symbol, earning_date FROM earnings_calendar")
+        }
+    assert rows == {("CRCL", "2026-08-01"), ("CRCL", "2026-08-05"), ("AAPL", "2026-08-18")}
+
+
 def test_schema_migration_of_pre_existing_store(monkeypatch, tmp_path):
     store_path = tmp_path / "old.sqlite3"
     with sqlite3.connect(store_path) as conn:

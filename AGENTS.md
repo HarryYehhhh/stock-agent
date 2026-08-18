@@ -20,7 +20,7 @@ Run a single test: `PYTHONPATH=src uv run pytest tests/test_agent.py -v -k test_
 
 ## Architecture
 
-Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. Uses Groq (`llama-3.3-70b-versatile`) with tool-use loop via the `groq` SDK.
+Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. Uses Groq (`openai/gpt-oss-120b`) with tool-use loop via the `groq` SDK.
 
 **Request flow:** Telegram webhook → `webhook_handler` (Lambda, 10s) → SQS → `processor_handler` (Lambda, 300s) → `run_agent()` → Groq tool-use loop (max 10 iterations) → Telegram reply. The SQS decoupling prevents Telegram's 60s timeout from killing long agent runs.
 

@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-08-18 — fix-groq-model-and-calendar — evaluator — ✅ Pass
+- 連結：docs/qa-reports/fix-groq-model-and-calendar.md
+- 驗證：Unit 580/580 passed（`PYTHONPATH=src uv run pytest tests/ -v`，需 `dangerouslyDisableSandbox` 繞過 sandbox 對 `test_local_integration.py` ThreadingHTTPServer.bind 的限制，與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）
+- 備註：循環次數 1（generator 一次到位，無需回送修改）；🔴 0、🟡 1（`sync_earnings` 於 Finnhub 回傳空 list 時會清空該 symbol 所有未來快取 row，無法區分「真的沒有排定財報」與「該次呼叫異常但仍 200」，屬已知取捨、建議補測試/註解記錄，不阻擋合併）；🟢 1（`agent.py:390` 註解殘留舊 model 名，純措辭、不影響行為）；用 `git stash` 只還原 `src/`（保留新測試）驗證 12 個新增重現測試在修復前全部 FAIL、修復後全部 PASS；未解 P0/P1 數：0
+
 ## 2026-07-31 — tech-stock-focus — evaluator — ✅ Pass（round 3：文件對齊追加輪）
 - 連結：docs/qa-reports/tech-stock-focus.md
 - 驗證：Unit 555/568 passed（13 errors 為既有 sandbox socket bind 限制，與本次改動無關；與 round 2 一致，無 regression）；Integration not required；E2E not required；External Smoke not requested（blocking: false）

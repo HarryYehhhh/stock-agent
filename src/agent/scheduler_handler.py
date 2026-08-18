@@ -35,7 +35,7 @@ from datetime import date, datetime, timedelta, timezone
 
 from aws_lambda_powertools import Logger
 
-from agent.agent import run_agent
+from agent.agent import NON_CACHEABLE_FALLBACK_MESSAGES, run_agent
 from agent.db.backend import get_backend
 from agent.market_summary import push_daily_summary, refresh_news
 from agent.prompts import COMPANY_PROMPT_TEMPLATE
@@ -54,14 +54,21 @@ def sync_earnings() -> list[str]:
     today = date.today()
     date_to = (today + timedelta(days=SYNC_DAYS)).isoformat()
     failed = []
-    symbols = get_backend().get_active_watchlist_symbols()
+    backend = get_backend()
+    symbols = backend.get_active_watchlist_symbols()
     for item in symbols:
         symbol = item["symbol"]
         try:
-            get_earnings_calendar(today.isoformat(), date_to, symbol=symbol)
+            rows = get_earnings_calendar(today.isoformat(), date_to, symbol=symbol)
         except Exception:
             logger.exception("earnings sync failed for %s", symbol)
             failed.append(symbol)
+            continue
+        try:
+            keep_dates = [row["date"] for row in rows if row.get("date")]
+            backend.delete_earnings_calendar_except(symbol, keep_dates, today.isoformat())
+        except Exception:
+            logger.exception("earnings calendar cleanup failed for %s", symbol)
     logger.info(
         "sync_earnings: synced %d/%d symbols (failed=%s)",
         len(symbols) - len(failed), len(symbols), failed,
@@ -94,11 +101,22 @@ def _stale_banner(earnings: list[dict]) -> str:
 def _company_summary(backend, row: dict, target_date: str) -> str:
     """Return the cached Groq summary for this company's earnings, generating
     and caching it on first use. Falls back to raw data (uncached, so the next
-    run retries) if generation fails."""
+    run retries) if generation fails or run_agent() itself returns a
+    Groq/tool-loop failure fallback message (NON_CACHEABLE_FALLBACK_MESSAGES) —
+    otherwise that error text would get cached as if it were a real summary."""
     symbol = row["symbol"]
     cached = backend.get_company_summary(symbol, target_date)
     if cached:
         return cached
+
+    def raw_data_fallback() -> str:
+        return (
+            f"*{symbol}*："
+            f"時段 {row.get('extended_hour') or '未知'}、"
+            f"EPS 預期 {row.get('eps_estimate') or '未知'}、"
+            f"營收預期 {row.get('revenue_estimate') or '未知'}"
+            "（摘要生成失敗，顯示原始資料）"
+        )
 
     data = {k: v for k, v in row.items() if k != "chat_id"}
     try:
@@ -112,13 +130,16 @@ def _company_summary(backend, row: dict, target_date: str) -> str:
         )
     except Exception:
         logger.exception("summary generation failed for %s", symbol)
-        return (
-            f"*{symbol}*："
-            f"時段 {row.get('extended_hour') or '未知'}、"
-            f"EPS 預期 {row.get('eps_estimate') or '未知'}、"
-            f"營收預期 {row.get('revenue_estimate') or '未知'}"
-            "（摘要生成失敗，顯示原始資料）"
+        return raw_data_fallback()
+
+    if summary in NON_CACHEABLE_FALLBACK_MESSAGES:
+        logger.warning(
+            "summary generation returned a Groq/tool-loop failure fallback for %s: %r",
+            symbol,
+            summary,
         )
+        return raw_data_fallback()
+
     backend.upsert_company_summary(symbol, target_date, summary)
     return summary
 

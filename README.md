@@ -1,6 +1,6 @@
 # Stock Earnings Agent
 
-Telegram AI agent for US stock earnings and market updates: proactively pushes earnings reminders and a daily tech-stock market summary to subscribers, and answers questions in Traditional Chinese. Powered by Groq (`llama-3.3-70b-versatile`) with tool-use, deployed to AWS Lambda + API Gateway + SQS + DynamoDB via SAM.
+Telegram AI agent for US stock earnings and market updates: proactively pushes earnings reminders and a daily tech-stock market summary to subscribers, and answers questions in Traditional Chinese. Powered by Groq (`openai/gpt-oss-120b`) with tool-use, deployed to AWS Lambda + API Gateway + SQS + DynamoDB via SAM.
 
 ## Quick start
 

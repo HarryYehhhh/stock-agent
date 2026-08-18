@@ -19,7 +19,7 @@ Run a single test: `PYTHONPATH=src uv run pytest tests/test_agent.py -v -k test_
 
 ## Architecture
 
-Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. Uses Groq (`llama-3.3-70b-versatile`) with tool-use loop via the `groq` SDK.
+Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. Uses Groq (`openai/gpt-oss-120b`) with tool-use loop via the `groq` SDK.
 
 **Request flow:** Telegram webhook → `webhook_handler` (Lambda, 10s) → SQS → `processor_handler` (Lambda, 300s) → `run_agent()` → Groq tool-use loop (max 10 iterations) → Telegram reply. The SQS decoupling prevents Telegram's 60s timeout from killing long agent runs.
 
@@ -61,7 +61,7 @@ Telegram bot AI agent for US stock earnings, responding in Traditional Chinese. 
 | 元件 | 費用 |
 |------|------|
 | API Gateway + Lambda + EventBridge + DynamoDB + SQS + ECR | 免費額度內 ~$0 |
-| Groq API (`llama-3.3-70b-versatile`, free tier) | ~$0 |
+| Groq API (`openai/gpt-oss-120b`, free tier) | ~$0 |
 | Finnhub API (free tier) + Telegram Bot | $0 |
 | **合計** | **~$0/月（皆在免費額度內）** |
 

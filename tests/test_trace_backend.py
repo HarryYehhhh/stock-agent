@@ -37,7 +37,7 @@ def _sample_trace(chat_id: str, ts: str, trace_id: str, outcome: str = "complete
         "total_ms": 850,
         "outcome": outcome,
         "reply_char_count": 42,
-        "model": "llama-3.3-70b-versatile",
+        "model": "openai/gpt-oss-120b",
         "ttl": 1234567890,
         "bucket": "trace",
     }
@@ -63,7 +63,7 @@ def _assert_round_trip(backend) -> None:
     assert got["usage_by_iteration"] == trace["usage_by_iteration"]
     assert got["total_ms"] == 850
     assert got["reply_char_count"] == 42
-    assert got["model"] == "llama-3.3-70b-versatile"
+    assert got["model"] == "openai/gpt-oss-120b"
 
 
 def test_local_save_and_list_traces_round_trip(local_store):

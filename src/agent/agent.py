@@ -22,7 +22,7 @@ from agent.tools import ALL_TOOL_SCHEMAS, TOOL_FUNCTIONS
 
 log = logging.getLogger(__name__)
 
-MODEL = "llama-3.3-70b-versatile"
+MODEL = "openai/gpt-oss-120b"
 MAX_TOOL_LOOPS = 10
 MAX_TOOL_USE_FAILED_RETRIES = 3
 
@@ -69,6 +69,31 @@ MIN_SCORE = 3.5
 EXCEPTION_MIN_SCORE = 3.5
 
 OFF_TOPIC_REPLY = "非美股相關問題無法回答"
+
+# --- Groq/tool-loop failure fallback replies ---
+# finalize() returns these when the Groq call or tool loop fails outright
+# rather than producing a genuine LLM answer. Callers that cache run_agent()'s
+# return value (e.g. scheduler_handler._company_summary) must check the
+# result against NON_CACHEABLE_FALLBACK_MESSAGES before caching it, so a
+# transient failure isn't persisted as if it were real content (see bug fix:
+# CRCL 2026-08-18 GROQ_ERROR_MESSAGE cached as a company summary for 30 days).
+GROQ_ERROR_MESSAGE = "⚠️ AI 服務暫時無法回應，請稍後再試。"
+GROQ_REQUEST_TOO_LARGE_MESSAGE = "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。"
+GROQ_RATE_LIMIT_MESSAGE = "⏳ 今日 AI 額度已用完或請求過於頻繁，請稍後再試。"
+TOOL_USE_FAILED_MESSAGE = "⚠️ 工具呼叫連續失敗，請換個問法再試。"
+TOOL_ERROR_MESSAGE = "⚠️ 目前無法取得資料，請稍後再試。"
+LOOP_EXCEEDED_MESSAGE = "（推理超過最大迴圈次數，請換個問法重試）"
+
+NON_CACHEABLE_FALLBACK_MESSAGES = frozenset(
+    {
+        GROQ_ERROR_MESSAGE,
+        GROQ_REQUEST_TOO_LARGE_MESSAGE,
+        GROQ_RATE_LIMIT_MESSAGE,
+        TOOL_USE_FAILED_MESSAGE,
+        TOOL_ERROR_MESSAGE,
+        LOOP_EXCEEDED_MESSAGE,
+    }
+)
 
 
 def _retrieve_playbook_hits(query: str) -> list[tuple[Section, float]]:
@@ -293,7 +318,7 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
                     tool_use_failed_count,
                     _sanitize_error(str(e)),
                 )
-                return finalize("tool_use_failed_exhausted", "⚠️ 工具呼叫連續失敗，請換個問法再試。")
+                return finalize("tool_use_failed_exhausted", TOOL_USE_FAILED_MESSAGE)
             log.warning("tool_use_failed, asking model to retry: %s", _sanitize_error(str(e)))
             messages.append({
                 "role": "user",
@@ -308,10 +333,10 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
                 "groq API error status=%s: %s", e.status_code, _sanitize_error(str(e))
             )
             if e.status_code == 413:
-                return finalize("groq_error", "⚠️ 這個問題需要的資料量超過目前額度限制，請把問題拆小或稍後再試。")
+                return finalize("groq_error", GROQ_REQUEST_TOO_LARGE_MESSAGE)
             if e.status_code == 429:
-                return finalize("groq_error", "⏳ 今日 AI 額度已用完或請求過於頻繁，請稍後再試。")
-            return finalize("groq_error", "⚠️ AI 服務暫時無法回應，請稍後再試。")
+                return finalize("groq_error", GROQ_RATE_LIMIT_MESSAGE)
+            return finalize("groq_error", GROQ_ERROR_MESSAGE)
 
         usage = getattr(response, "usage", None)
         if usage:
@@ -376,7 +401,7 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
                         tc.function.name,
                         tool_result.get("error"),
                     )
-                    return finalize("tool_error", "⚠️ 目前無法取得資料，請稍後再試。")
+                    return finalize("tool_error", TOOL_ERROR_MESSAGE)
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tc.id,
@@ -386,4 +411,4 @@ def run_agent(user_message: str, history: list[dict], chat_id: str | None = None
 
         return finalize("completed", (message.content or "").strip())
 
-    return finalize("loop_exceeded", "（推理超過最大迴圈次數，請換個問法重試）")
+    return finalize("loop_exceeded", LOOP_EXCEEDED_MESSAGE)

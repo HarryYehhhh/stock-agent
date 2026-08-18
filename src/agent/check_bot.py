@@ -23,7 +23,7 @@ from groq import Groq
 LOCAL_SERVER_URL = "http://localhost:8080"
 NGROK_API_URL = "http://localhost:4040/api/tunnels"
 TELEGRAM_API = "https://api.telegram.org"
-DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_GROQ_MODEL = "openai/gpt-oss-120b"
 HTTP_TIMEOUT = 10.0
 
 PASS = "PASS"

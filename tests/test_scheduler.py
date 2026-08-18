@@ -173,6 +173,50 @@ def test_sync_earnings_collects_failures(local_mocks, monkeypatch):
     assert scheduler_handler.sync_earnings() == ["AAPL"]
 
 
+def test_sync_earnings_deletes_stale_rows_when_finnhub_moves_the_date(local_mocks, monkeypatch):
+    """Regression: CRCL cached 8/18 by an earlier sync, then Finnhub moves the
+    date to 8/5 — the stale 8/18 row must be cleaned up by sync_earnings()."""
+    from agent.db.backend import get_backend
+
+    today = date.today().isoformat()
+    backend = get_backend()
+    backend.upsert_earnings_calendar([{"symbol": "AAPL", "date": today}])
+
+    def fake_fetch(_date_from, _date_to, symbol):
+        # Mimics the real tool: the latest Finnhub fetch also persists the
+        # new row (see tools.earnings.get_earnings_calendar).
+        rows = [{"symbol": symbol, "date": "2026-12-31"}]
+        backend.upsert_earnings_calendar(rows)
+        return rows
+
+    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_fetch)
+
+    failed = scheduler_handler.sync_earnings()
+
+    assert failed == []
+    rows = get_backend().get_chat_watchlist_earnings("111", "2020-01-01", "2030-12-31")
+    assert [row["earning_date"] for row in rows] == ["2026-12-31"]
+
+
+def test_sync_earnings_cleanup_failure_does_not_block_other_symbols(local_mocks, monkeypatch):
+    """A single symbol's cleanup failure must not abort the sync of other
+    symbols (same per-symbol resilience as the existing fetch-failure test)."""
+    from agent.db.backend import get_backend
+
+    fake_fetch = MagicMock(return_value=[])
+    monkeypatch.setattr(scheduler_handler, "get_earnings_calendar", fake_fetch)
+    monkeypatch.setattr(
+        get_backend(),
+        "delete_earnings_calendar_except",
+        MagicMock(side_effect=RuntimeError("delete boom")),
+    )
+
+    failed = scheduler_handler.sync_earnings()
+
+    assert failed == []
+    fake_fetch.assert_called_once()
+
+
 def test_run_notifies_for_todays_date_not_tomorrow(monkeypatch):
     """Regression: earnings dates from Finnhub are US-calendar dates. At the
     10:00 Asia/Taipei notify run (UTC 02:00), `date.today()` in UTC already
@@ -267,6 +311,41 @@ def test_local_skips_when_no_cached_earnings(local_mocks):
 
     local_mocks["agent"].assert_not_called()
     local_mocks["send"].assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "fallback_attr",
+    [
+        "GROQ_ERROR_MESSAGE",
+        "GROQ_RATE_LIMIT_MESSAGE",
+        "GROQ_REQUEST_TOO_LARGE_MESSAGE",
+        "TOOL_USE_FAILED_MESSAGE",
+        "TOOL_ERROR_MESSAGE",
+        "LOOP_EXCEEDED_MESSAGE",
+    ],
+)
+def test_local_summary_groq_error_fallback_is_not_cached(
+    local_mocks, local_store, fallback_attr
+):
+    """Regression: run_agent() returning a Groq/tool-loop failure fallback
+    string (not raising) must not be cached as if it were a real summary —
+    e.g. CRCL/2026-08-18 got GROQ_ERROR_MESSAGE cached for 30 days. Falls
+    back to raw data and stays uncached so the next run retries."""
+    from agent import agent as agent_module
+
+    fallback_message = getattr(agent_module, fallback_attr)
+    _seed_earnings(["AAPL"])
+    local_mocks["agent"].return_value = fallback_message
+
+    scheduler_handler._run()
+
+    body = local_mocks["send"].call_args.args[1]
+    assert "摘要生成失敗" in body
+    assert "AAPL" in body
+    assert fallback_message not in body
+    # Fallback text is not cached, so a later run regenerates the summary.
+    with sqlite3.connect(local_store) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM company_summaries").fetchone()[0] == 0
 
 
 def test_local_summary_failure_falls_back_and_retries_next_run(local_mocks, local_store):

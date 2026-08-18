@@ -127,7 +127,7 @@ def test_build_history_empty():
 
 
 def test_uses_groq_model():
-    assert "llama" in agent_module.MODEL
+    assert agent_module.MODEL == "openai/gpt-oss-120b"
 
 
 def test_system_instruction_is_string():

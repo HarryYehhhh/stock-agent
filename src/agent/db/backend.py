@@ -101,6 +101,10 @@ class StorageBackend(Protocol):
 
     def upsert_earnings_calendar(self, items: list[dict]) -> None: ...
 
+    def delete_earnings_calendar_except(
+        self, symbol: str, keep_dates: list[str], date_from: str
+    ) -> None: ...
+
     def get_active_watchlist_symbols(self) -> list[dict]: ...
 
     def get_watchlist_earnings_for_date(self, earning_date: str) -> list[dict]: ...
@@ -628,6 +632,34 @@ class LocalSQLiteBackend:
                 """,
                 rows,
             )
+
+    def delete_earnings_calendar_except(
+        self, symbol: str, keep_dates: list[str], date_from: str
+    ) -> None:
+        """Delete symbol's earnings_calendar rows with earning_date >= date_from
+        that are not in keep_dates (stale rows left behind when Finnhub moves
+        a company's earnings date to a new date before the old row's TTL
+        expires). Rows before date_from are left untouched."""
+        symbol = symbol.upper()
+        with self._connect() as conn:
+            if keep_dates:
+                placeholders = ",".join("?" for _ in keep_dates)
+                conn.execute(
+                    f"""
+                    DELETE FROM earnings_calendar
+                    WHERE symbol = ? AND earning_date >= ?
+                      AND earning_date NOT IN ({placeholders})
+                    """,
+                    (symbol, date_from, *keep_dates),
+                )
+            else:
+                conn.execute(
+                    """
+                    DELETE FROM earnings_calendar
+                    WHERE symbol = ? AND earning_date >= ?
+                    """,
+                    (symbol, date_from),
+                )
 
     def get_watchlist_earnings_for_date(self, earning_date: str) -> list[dict[str, Any]]:
         """Earnings on earning_date for every active subscriber's watchlist symbols.
@@ -1256,6 +1288,32 @@ class DynamoDBBackend:
             if item.get("revenueEstimate") is not None:
                 record["revenue_estimate"] = Decimal(str(item["revenueEstimate"]))
             self._earnings_calendar.put_item(Item=record)
+
+    def delete_earnings_calendar_except(
+        self, symbol: str, keep_dates: list[str], date_from: str
+    ) -> None:
+        """Delete symbol's earnings_calendar rows with earning_date >= date_from
+        that are not in keep_dates (stale rows left behind when Finnhub moves
+        a company's earnings date to a new date before the old row's TTL
+        expires). Rows before date_from are left untouched."""
+        symbol = symbol.upper()
+        keep = set(keep_dates)
+        resp = self._earnings_calendar.query(
+            KeyConditionExpression=Key("symbol").eq(symbol) & Key("earning_date").gte(date_from)
+        )
+        items = list(resp.get("Items", []))
+        while "LastEvaluatedKey" in resp:
+            resp = self._earnings_calendar.query(
+                KeyConditionExpression=Key("symbol").eq(symbol)
+                & Key("earning_date").gte(date_from),
+                ExclusiveStartKey=resp["LastEvaluatedKey"],
+            )
+            items.extend(resp.get("Items", []))
+        for item in items:
+            if item["earning_date"] not in keep:
+                self._earnings_calendar.delete_item(
+                    Key={"symbol": symbol, "earning_date": item["earning_date"]}
+                )
 
     def get_active_watchlist_symbols(self) -> list[dict[str, Any]]:
         """Distinct symbols across all active subscribers' watchlists."""
