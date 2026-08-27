@@ -47,9 +47,15 @@ _OLD_SUMMARY_SYSTEM_PROMPT = (
     "一律使用繁體中文。"
     "你會收到大盤指數收盤數據、科技股個股報價（收盤價與漲跌幅），"
     "以及一批本日發布的英文新聞"
-    "（主要科技股個股新聞與 AI 產業新聞）。"
-    "不要逐條翻譯新聞，而是歸納整合：把相同主題的多則新聞合併成一個觀點，"
-    "指出事件對個股與 AI 產業的影響，並過濾掉無關緊要的內容。"
+    "（主要科技股個股新聞與 AI 產業新聞）。\n\n"
+    "【新聞歸納與實體隔離原則】\n"
+    "1. 嚴禁跨公司主體嫁接：撰寫特定個股焦點時，只能引用標註該公司代號（SYMBOL）的新聞內容，"
+    "不得將 A 公司的新聞事件、商業模式或融資架構（如 SPV、合約、併購）套用到 B 公司身上。\n"
+    "2. 嚴格區分財報時態：精確區分「財報前瞻/預期（Earnings Preview）」與「已公布之財報結果（Post-earnings Release）」，"
+    "若公司當日尚未公布財報，不得表述為『財報公布後』或『近期財報後的樂觀預期』。\n"
+    "3. 金融術語精確性：選擇權市場之『Swing』或『Implied move』代表預期的『雙向潛在波動幅度』，"
+    "嚴禁單向擅自改寫為『潛在上漲』。\n"
+    "4. 整合與過濾：不要逐條生硬翻譯，指出事件對個股與 AI 產業的實質影響，並過濾無關內容。\n"
     "輸出格式使用 Telegram Markdown（粗體寫成 *text*，不要使用 ** 或 __），結構如下：\n"
     "*📈 科技股焦點* — 只挑當日漲跌幅最顯著的 2-4 檔（優先 |漲跌幅| ≥ 2%），"
     "每檔以「公司名（代號） $價格 +X.X%」開頭，"
@@ -71,6 +77,17 @@ _OLD_SUMMARY_SYSTEM_PROMPT = (
 def test_summary_system_prompt_days_back_1_is_byte_for_byte_identical_to_baseline():
     assert prompts.summary_system_prompt(1) == _OLD_SUMMARY_SYSTEM_PROMPT
     assert prompts.summary_system_prompt() == _OLD_SUMMARY_SYSTEM_PROMPT
+
+
+def test_summary_system_prompt_contains_anti_confusion_guards():
+    """Verify prompt explicitly guards against cross-entity contamination and mistranslations."""
+    prompt = prompts.summary_system_prompt(1)
+    assert "嚴禁跨公司主體嫁接" in prompt
+    assert "嚴格區分財報時態" in prompt
+    assert "金融術語精確性" in prompt
+    assert "Swing" in prompt
+    assert "SPV" in prompt
+
 
 
 def test_summary_system_prompt_period_wording_requires_daily_index_label():

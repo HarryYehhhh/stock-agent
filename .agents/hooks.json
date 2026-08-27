@@ -1,0 +1,12 @@
+{
+  "test-runner-guard": {
+    "enabled": false,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "PYTHONPATH=src uv run pytest tests/ -q",
+        "timeout": 60
+      }
+    ]
+  }
+}

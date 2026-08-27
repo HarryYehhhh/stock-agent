@@ -398,6 +398,35 @@ def test_format_index_block():
     ]
 
 
+def test_format_news_block_groups_by_symbol_and_separates_headline_summary():
+    news = {
+        "big7": [
+            {"symbol": "NVDA", "headline": "Nvidia options volatile", "summary": "Implied move is high."},
+            {"symbol": "NVDA", "headline": "Nvidia chip demand strong", "summary": "Data center growth."},
+            {"symbol": "AVGO", "headline": "Broadcom SPV financing", "summary": "Vendor debt structure."},
+        ],
+        "ai": [
+            {"headline": "OpenAI announces model", "summary": "Frontier intelligence."},
+        ],
+    }
+    formatted = ms._format_news_block(news)
+
+    assert "[科技股個股新聞]" in formatted
+    assert "### 【NVDA 新聞】" in formatted
+    assert "- 標題: Nvidia options volatile\n  摘要: Implied move is high." in formatted
+    assert "- 標題: Nvidia chip demand strong\n  摘要: Data center growth." in formatted
+    assert "### 【AVGO 新聞】" in formatted
+    assert "- 標題: Broadcom SPV financing\n  摘要: Vendor debt structure." in formatted
+    assert "[AI 產業新聞]" in formatted
+    assert "- 標題: OpenAI announces model\n  摘要: Frontier intelligence." in formatted
+
+
+def test_format_news_block_empty():
+    formatted = ms._format_news_block({"big7": [], "ai": []})
+    assert "（無個股新聞）" in formatted
+    assert "（無 AI 產業新聞）" in formatted
+
+
 def test_compute_date_range_single_day():
     assert ms._compute_date_range([
         {"published_at": "2026-07-25T12:00:00+00:00"},

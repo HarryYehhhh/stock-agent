@@ -279,11 +279,35 @@ def _format_index_block(quotes: list[dict]) -> str:
 
 def _format_news_block(news: dict) -> str:
     lines = ["[科技股個股新聞]"]
-    for it in news["big7"]:
-        lines.append(f"- ({it['symbol']}) {it['headline']}: {it['summary']}")
+    by_symbol: dict[str, list[dict]] = {}
+    for it in news.get("big7", []):
+        sym = it.get("symbol") or "其他"
+        by_symbol.setdefault(sym, []).append(it)
+
+    if not by_symbol:
+        lines.append("（無個股新聞）")
+    else:
+        for sym, items in by_symbol.items():
+            lines.append(f"\n### 【{sym} 新聞】")
+            for it in items:
+                headline = (it.get("headline") or "").strip()
+                summary = (it.get("summary") or "").strip()
+                lines.append(f"- 標題: {headline}")
+                if summary:
+                    lines.append(f"  摘要: {summary}")
+
     lines.append("\n[AI 產業新聞]")
-    for it in news["ai"]:
-        lines.append(f"- {it['headline']}: {it['summary']}")
+    ai_items = news.get("ai", [])
+    if not ai_items:
+        lines.append("（無 AI 產業新聞）")
+    else:
+        for it in ai_items:
+            headline = (it.get("headline") or "").strip()
+            summary = (it.get("summary") or "").strip()
+            lines.append(f"- 標題: {headline}")
+            if summary:
+                lines.append(f"  摘要: {summary}")
+
     return "\n".join(lines)
 
 
