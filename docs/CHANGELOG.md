@@ -15,6 +15,11 @@ Harness 執行記錄。**最新的在上面**（reverse chronological）。
 
 <!-- 新條目從這裡開始 -->
 
+## 2026-11-08 — earnings-summary-news-grounding — evaluator — ✅ Pass
+- 連結：docs/qa-reports/earnings-summary-news-grounding.md
+- 驗證：Unit 586/586 passed（`PYTHONPATH=src uv run pytest tests/ -v`）；Integration 27/27 passed（`PYTHONPATH=src uv run pytest tests/test_local_integration.py -v`）；SAM template valid（`sam validate --region ap-northeast-1 --lint`）；External Smoke not requested（blocking: false）
+- 備註：修復財報前瞻摘要出現過季產品（如 iPhone 15）與模型幻覺問題（採解法二：程式碼主動抓取新聞注入 Prompt）；`scheduler_handler.py` 新增 `_fetch_company_news_context(symbol)` 調取最近 7 天新聞並注入 `COMPANY_PROMPT_TEMPLATE`；`prompts.py` 增列新聞參考區與反幻覺限制；新增 3 條測試驗證新聞注入與降級行為，既有外部邊界 mock 全數覆蓋。循環次數 1；🔴 0、🟡 0；未解問題 0。可合併。
+
 ## 2026-08-18 — fix-groq-model-and-calendar — evaluator — ✅ Pass
 - 連結：docs/qa-reports/fix-groq-model-and-calendar.md
 - 驗證：Unit 580/580 passed（`PYTHONPATH=src uv run pytest tests/ -v`，需 `dangerouslyDisableSandbox` 繞過 sandbox 對 `test_local_integration.py` ThreadingHTTPServer.bind 的限制，與本次改動無關）；Integration not required；E2E not required；External Smoke not requested（blocking: false）

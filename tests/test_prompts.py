@@ -17,6 +17,17 @@ def test_prompt_constants_are_nonempty_strings():
         assert value.strip()
 
 
+def test_company_prompt_template_has_news_and_anti_hallucination_guards():
+    template = prompts.COMPANY_PROMPT_TEMPLATE
+    assert "{news}" in template
+    assert "{symbol}" in template
+    assert "{target_date}" in template
+    assert "{row}" in template
+    assert "近期新聞參考：" in template
+    assert "嚴禁憑空捏造" in template
+    assert "重點必須嚴格依據上方提供的近期新聞內容撰寫" in template
+
+
 def test_summary_system_prompt_daily_wording():
     prompt = prompts.summary_system_prompt(1)
 
