@@ -136,14 +136,16 @@ def local_mocks(local_store, monkeypatch):
 
     fake_run_agent = MagicMock(return_value="*AAPL* 財報摘要")
     fake_send = MagicMock()
+    fake_news = MagicMock(return_value=[])
 
     subscribe("111")
     add_to_watchlist("111", "AAPL")
 
     monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
     monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
+    monkeypatch.setattr(scheduler_handler, "get_stock_news", fake_news)
 
-    return {"agent": fake_run_agent, "send": fake_send}
+    return {"agent": fake_run_agent, "send": fake_send, "news": fake_news}
 
 
 def test_sync_earnings_fetches_active_watchlist_symbols(local_mocks, monkeypatch):
@@ -247,6 +249,47 @@ def test_local_notify_reads_sqlite_only_and_is_idempotent(local_mocks):
     scheduler_handler._run()
     assert local_mocks["send"].call_count == 1
     assert local_mocks["agent"].call_count == 1
+
+
+def test_company_summary_injects_fetched_news_into_prompt(local_mocks, monkeypatch):
+    """Regression: company summary must inject recent news into the prompt to prevent
+    hallucinating out-of-date product models or speculative company news."""
+    _seed_earnings(["AAPL"])
+    fake_news = MagicMock(
+        return_value=[
+            {"headline": "Apple announces iPhone Duo", "summary": "New flagship announced."},
+            {
+                "headline": "Apple supplier increases display shipments",
+                "summary": "Display production ramps up.",
+            },
+        ]
+    )
+    monkeypatch.setattr(scheduler_handler, "get_stock_news", fake_news)
+
+    scheduler_handler._run()
+
+    prompt = local_mocks["agent"].call_args.args[0]
+    assert "近期新聞參考：" in prompt
+    assert "Apple announces iPhone Duo" in prompt
+    assert "New flagship announced." in prompt
+    assert "嚴禁憑空捏造" in prompt
+    fake_news.assert_called_once_with("AAPL", days_back=7)
+
+
+def test_company_summary_handles_empty_or_failed_news_gracefully(local_mocks, monkeypatch):
+    """When news fetch returns empty or raises an exception, the prompt should indicate
+    no recent news and still proceed without crashing."""
+    _seed_earnings(["AAPL"])
+    monkeypatch.setattr(
+        scheduler_handler, "get_stock_news", MagicMock(side_effect=RuntimeError("finnhub down"))
+    )
+
+    scheduler_handler._run()
+
+    prompt = local_mocks["agent"].call_args.args[0]
+    assert "近期新聞參考：" in prompt
+    assert "（近期無相關新聞）" in prompt
+    assert "*AAPL* 財報摘要" in local_mocks["send"].call_args.args[1]
 
 
 def test_local_company_summary_cached_across_subscribers(local_mocks, local_store):

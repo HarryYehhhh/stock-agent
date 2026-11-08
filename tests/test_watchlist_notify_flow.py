@@ -66,6 +66,8 @@ class _FakeFinnhubClient:
 
     def get(self, path: str, params: dict | None = None, **_kwargs) -> _FakeResponse:
         symbol = (params or {}).get("symbol", "")
+        if path == "/company-news":
+            return _FakeResponse([])
         return _FakeResponse({"earningsCalendar": self._rows.get(symbol.upper(), [])})
 
 
@@ -78,6 +80,7 @@ def _mocks(monkeypatch, run_agent_result="*STUB* 財報摘要"):
     monkeypatch.setattr(scheduler_handler, "send_message", fake_send)
     fake_run_agent = MagicMock(return_value=run_agent_result)
     monkeypatch.setattr(scheduler_handler, "run_agent", fake_run_agent)
+    monkeypatch.setattr(scheduler_handler, "get_stock_news", MagicMock(return_value=[]))
     return fake_finnhub, fake_send, fake_run_agent
 
 

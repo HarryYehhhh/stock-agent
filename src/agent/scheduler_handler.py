@@ -41,6 +41,7 @@ from agent.market_summary import push_daily_summary, refresh_news
 from agent.prompts import COMPANY_PROMPT_TEMPLATE
 from agent.telegram_client import send_message
 from agent.tools.earnings import get_earnings_calendar
+from agent.tools.news import get_stock_news
 
 logger = Logger()
 
@@ -98,6 +99,34 @@ def _stale_banner(earnings: list[dict]) -> str:
     )
 
 
+def _fetch_company_news_context(symbol: str, max_items: int = 3) -> str:
+    """Fetch up to max_items recent news headlines/summaries for symbol within 7 days
+    to ground company summary generation and prevent hallucination."""
+    try:
+        items = get_stock_news(symbol, days_back=7)
+    except Exception:
+        logger.warning("news fetch failed for company summary %s", symbol, exc_info=True)
+        items = []
+
+    if not items:
+        return "（近期無相關新聞）"
+
+    lines = []
+    for it in items[:max_items]:
+        headline = (it.get("headline") or "").strip()
+        summary = (it.get("summary") or "").strip()
+        if not headline:
+            continue
+        if len(summary) > 150:
+            summary = summary[:147] + "..."
+        if summary:
+            lines.append(f"- {headline}: {summary}")
+        else:
+            lines.append(f"- {headline}")
+
+    return "\n".join(lines) if lines else "（近期無相關新聞）"
+
+
 def _company_summary(backend, row: dict, target_date: str) -> str:
     """Return the cached Groq summary for this company's earnings, generating
     and caching it on first use. Falls back to raw data (uncached, so the next
@@ -119,12 +148,14 @@ def _company_summary(backend, row: dict, target_date: str) -> str:
         )
 
     data = {k: v for k, v in row.items() if k != "chat_id"}
+    news_context = _fetch_company_news_context(symbol)
     try:
         summary = run_agent(
             COMPANY_PROMPT_TEMPLATE.format(
                 target_date=target_date,
                 symbol=symbol,
                 row=data,
+                news=news_context,
             ),
             [],
         )
